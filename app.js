@@ -1,0 +1,934 @@
+// WIMS clickable mockup. Plain JS, hash routing, in-memory state (resets on reload).
+(() => {
+  const D = window.WIMS_DATA;
+  const app = document.getElementById('app');
+
+  // ---------- state ----------
+  const S = {
+    role: 'admin',
+    guide: true,
+    release: {},   // orderId -> { ticks:{key:true}, cond:{key:val} }
+    ret: {},       // orderId -> { back:{}, dmg:{}, rep:{}, unit:{} }
+    sigs: {},      // orderId -> dataURL
+    q: '',
+    lastTour: 0,
+    nextOrder: 1043,
+    nextDmg: 93,
+    nextAdj: 311,
+  };
+  const ME = { admin: { name: 'Juan Dela Cruz', role: 'Admin', whs: null }, staff: { name: 'Maria Santos', role: 'Staff', whs: ['PSG', 'LPS'] } };
+  const me = () => ME[S.role];
+
+  // ---------- helpers ----------
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const n = x => Number(x).toLocaleString('en-PH');
+  const peso = x => '₱' + Number(x).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const item = sku => D.items.find(i => i.sku === sku);
+  const wh = id => D.warehouses.find(w => w.id === id);
+  const cust = id => D.customers[id];
+  const order = id => D.orders.find(o => o.id === id);
+  const cat = id => D.categories.find(c => c.id === id);
+  const allUnits = () => D.items.flatMap(i => i.units || []);
+  const unit = code => allUnits().find(u => u.code === code);
+  const lineQty = l => (l.units ? l.units.length : l.qty);
+  const OUT = ['In Transit', 'Delivered', 'Picked Up', 'Returning'];
+  const RES = ['Preparing', 'Ready for Pickup'];
+  const FLOW = {
+    delivery: ['Preparing', 'In Transit', 'Delivered', 'Returning', 'Returned'],
+    pickup: ['Preparing', 'Ready for Pickup', 'Picked Up', 'Returned'],
+  };
+  const myWh = w => !me().whs || me().whs.includes(w);
+  const visibleOrders = () => D.orders.filter(o => myWh(o.wh));
+  const unitOrder = code => D.orders.find(o => OUT.includes(o.status) && o.lines.some(l => (l.units || []).includes(code)));
+  const unitReserved = code => D.orders.find(o => RES.includes(o.status) && o.lines.some(l => (l.units || []).includes(code)));
+  const now = () => { const d = new Date(); return `${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} · ${d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`; };
+
+  function stats(it, whId) {
+    const match = w => !whId || (Array.isArray(whId) ? whId.includes(w) : w === whId);
+    const r = { good: 0, dmg: 0, rep: 0, out: 0, reserved: 0 };
+    if (it.track === 'count') {
+      for (const [w, [g, d, p]] of Object.entries(it.stock)) if (match(w)) { r.good += g; r.dmg += d; r.rep += p; }
+      for (const o of D.orders) {
+        if (!match(o.wh)) continue;
+        for (const l of o.lines) if (l.sku === it.sku) {
+          if (OUT.includes(o.status)) r.out += l.qty;
+          if (RES.includes(o.status)) r.reserved += l.qty;
+        }
+      }
+    } else {
+      for (const u of it.units) {
+        if (!match(u.wh)) continue;
+        if (unitOrder(u.code)) { r.out++; continue; }
+        if (u.cond === 'good') r.good++; else if (u.cond === 'damaged') r.dmg++; else if (u.cond === 'repair') r.rep++;
+        if (u.cond === 'good' && unitReserved(u.code)) r.reserved++;
+      }
+    }
+    r.avail = r.good - r.reserved;
+    r.total = r.good + r.dmg + r.rep + r.out;
+    return r;
+  }
+  function lowStock(whs) {
+    const res = [];
+    for (const it of D.items) for (const w of D.warehouses) {
+      if (whs && !whs.includes(w.id)) continue;
+      const s = stats(it, w.id);
+      if (s.total > 0 && s.avail < it.low) res.push({ it, w, s });
+    }
+    return res;
+  }
+
+  // ---------- icons ----------
+  const P = {
+    dash: '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
+    box: '<path d="M21 8 12 3 3 8v8l9 5 9-5V8Z"/><path d="m3 8 9 5 9-5M12 13v8"/>',
+    wh: '<path d="M3 21V9l9-5 9 5v12"/><path d="M7 21v-8h10v8M7 17h10"/>',
+    tag: '<path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8Z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
+    truck: '<path d="M3 6h11v10H3zM14 9h4l3 3v4h-7"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/>',
+    hand: '<path d="M7 11V6a1.5 1.5 0 0 1 3 0v4M10 10V4.5a1.5 1.5 0 0 1 3 0V10M13 10V5.5a1.5 1.5 0 0 1 3 0V11M16 11V8a1.5 1.5 0 0 1 3 0v5a8 8 0 0 1-8 8h-.5A7 7 0 0 1 5 18l-2-3.5a1.5 1.5 0 0 1 2.6-1.5L7 15"/>',
+    clip: '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 11l2 2 4-4M9 17h6"/>',
+    ret: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>',
+    adj: '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
+    chart: '<path d="M3 21h18M6 17V10M11 17V5M16 17v-5M21 17V8"/>',
+    bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/>',
+    gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/>',
+    qr: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M17 17h3v3h-3z"/>',
+    phone: '<rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/>',
+    check: '<path d="m5 12 5 5 9-10"/>',
+    alert: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/>',
+    info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',
+    search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    print: '<path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="7"/>',
+    cam: '<path d="M14.5 4h-5L8 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-4Z"/><circle cx="12" cy="13" r="3.5"/>',
+    wrench: '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4Z"/>',
+    sign: '<path d="M3 17c3-1 4-8 6-8s0 8 3 8 3-4 5-4 2 3 4 3"/><path d="M3 21h18"/>',
+    chair: '<path d="M7 3h10v8H7zM6 11h12M7 11v10M17 11v10M7 16h10"/>',
+    table: '<path d="M3 8h18M5 8v12M19 8v12M3 8l2-3h14l2 3"/>',
+    cloth: '<path d="M4 6h16l-2 14H6Z"/><path d="M4 6c2 3 4 3 8 3s6 0 8-3"/>',
+    tent: '<path d="M12 3 2 20h20Z"/><path d="M12 3v17M9 20l3-6 3 6"/>',
+    bulb: '<path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3Z"/>',
+    spk: '<rect x="5" y="2" width="14" height="20" rx="2"/><circle cx="12" cy="15" r="3.5"/><circle cx="12" cy="7" r="1.5"/>',
+    stage: '<path d="M2 14h20v6H2zM5 14V9h14v5"/>',
+    x: '<path d="M6 6l12 12M18 6 6 18"/>',
+    arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
+    eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>',
+  };
+  const ic = (k, extra = '') => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" ${extra}>${P[k] || ''}</svg>`;
+  const catIcon = { chairs: 'chair', tables: 'table', linens: 'cloth', tents: 'tent', lighting: 'bulb', sound: 'spk', staging: 'stage' };
+  const thumb = it => `<div class="thumb">${ic(catIcon[it.cat] || 'box')}</div>`;
+
+  // ---------- small UI pieces ----------
+  const statusTone = (o) => {
+    if (o.status === 'Returned') return o.discrepancy ? 'bad' : 'mute';
+    return { Preparing: 'warn', 'Ready for Pickup': 'info', 'In Transit': 'info', Delivered: 'ok', 'Picked Up': 'ok', Returning: 'info' }[o.status];
+  };
+  const statusPill = o => `<span class="pill ${statusTone(o)}">${o.status}${o.status === 'Returned' && o.discrepancy ? ' · discrepancy' : ''}</span>`;
+  const typeTag = o => o.type === 'delivery' ? `<span class="tag delivery">${ic('truck')}Delivery</span>` : `<span class="tag pickup">${ic('hand')}Pickup</span>`;
+  const condPill = c => ({ good: '<span class="pill ok">Good</span>', damaged: '<span class="pill bad">Damaged</span>', repair: '<span class="pill warn">For repair</span>', missing: '<span class="pill bad">Missing</span>', minor: '<span class="pill warn">Minor wear (noted)</span>' }[c] || c);
+  const condName = c => ({ good: 'Good', damaged: 'Damaged', repair: 'For repair', missing: 'Missing', minor: 'Minor wear (noted)' }[c] || c);
+  const stockBox = s => `<div class="stockbox"><span class="s-good">${n(s.good)} good</span>${s.dmg ? `<span class="s-dmg">${s.dmg} damaged</span>` : ''}${s.rep ? `<span class="s-rep">${s.rep} for repair</span>` : ''}${s.out ? `<span class="s-out">${n(s.out)} out</span>` : ''}</div>`;
+  const note = (html, tone = '') => `<div class="note ${tone}">${ic(tone === 'ok' ? 'check' : tone ? 'alert' : 'info')}<div>${html}</div></div>`;
+  const kpi = (label, value, sub, icon, tone = '') => `<div class="card kpi ${tone}"><div class="l"><span class="ic">${ic(icon)}</span>${label}</div><div class="v">${value}</div><div class="d">${sub}</div></div>`;
+  const head = (title, sub, actions = '', crumbs = '') => `${crumbs ? `<div class="crumbs">${crumbs}</div>` : ''}<div class="head"><div><h1>${title}</h1>${sub ? `<p>${sub}</p>` : ''}</div><div class="actions">${actions}</div></div>`;
+  const lineLabel = l => { const it = item(l.sku); return `<div class="cell-item">${thumb(it)}<div><b>${esc(it.name)}</b><small class="mono">${it.sku}</small></div></div>`; };
+
+  function toast(msg) {
+    document.querySelectorAll('.toast').forEach(t => t.remove());
+    const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg;
+    document.body.appendChild(t); setTimeout(() => t.remove(), 2600);
+  }
+  function modal(title, body, foot, onMount) {
+    const bg = document.createElement('div'); bg.className = 'modal-bg';
+    bg.innerHTML = `<div class="modal"><div class="card-h"><h3>${title}</h3><button class="btn sm" data-close>${ic('x')}</button></div><div class="card-b">${body}</div><div class="modal-f">${foot}</div></div>`;
+    bg.addEventListener('click', e => { if (e.target === bg || e.target.closest('[data-close]')) bg.remove(); });
+    document.body.appendChild(bg);
+    onMount && onMount(bg.querySelector('.modal'), () => bg.remove());
+  }
+
+  // Deterministic scribble used as the signature on seeded clearances.
+  function scribble(name) {
+    let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+    const rnd = () => ((h = (h * 1103515245 + 12345) >>> 0) / 4294967296);
+    let d = 'M10 45', x = 10;
+    for (let i = 0; i < 9; i++) { x += 16 + rnd() * 10; d += ` Q ${x - 8} ${10 + rnd() * 30}, ${x} ${30 + rnd() * 22}`; }
+    d += ` M 20 ${52 + rnd() * 4} L ${x - 10} ${48 + rnd() * 6}`;
+    return `<svg viewBox="0 0 ${x + 14} 64"><path d="${d}" fill="none" stroke="#1b2a55" stroke-width="2.2" stroke-linecap="round"/></svg>`;
+  }
+
+  // QR codes: real, scannable ones via qrcode-generator; fallback pattern if offline.
+  function qrSvg(text) {
+    if (window.qrcode) {
+      const q = window.qrcode(0, 'M'); q.addData(text); q.make();
+      const m = q.getModuleCount(); let r = '';
+      for (let y = 0; y < m; y++) for (let x = 0; x < m; x++) if (q.isDark(y, x)) r += `M${x + 2} ${y + 2}h1v1h-1z`;
+      return `<svg viewBox="0 0 ${m + 4} ${m + 4}" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><path d="${r}" fill="#111"/></svg>`;
+    }
+    let h = 7; for (const c of text) h = (h * 33 + c.charCodeAt(0)) >>> 0;
+    let r = ''; const m = 21;
+    for (let y = 0; y < m; y++) for (let x = 0; x < m; x++) {
+      const f = (x < 7 && y < 7) || (x > 13 && y < 7) || (x < 7 && y > 13);
+      if (f) { const a = x > 13 ? x - 14 : x, b = y > 13 ? y - 14 : y; if (a === 0 || a === 6 || b === 0 || b === 6 || (a > 1 && a < 5 && b > 1 && b < 5)) r += `M${x + 2} ${y + 2}h1v1h-1z`; continue; }
+      h = (h * 1103515245 + 12345) >>> 0; if (h & 0x10000) r += `M${x + 2} ${y + 2}h1v1h-1z`;
+    }
+    return `<svg viewBox="0 0 25 25" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><path d="${r}" fill="#111"/></svg>`;
+  }
+
+  // ---------- guided tour ----------
+  const TOUR = [
+    ['#/dashboard', 'The <b>Admin dashboard</b>: stock across all warehouses, orders out at events, items that need repair, and anything waiting on you.'],
+    ['#/orders', 'Every order is either a <b>Delivery</b> (we bring the items to the event) or a <b>Pickup</b> (the customer collects them at the warehouse).'],
+    ['#/orders/new', '<b>Creating an order.</b> As you add items, the system checks stock in the chosen warehouse. Try asking for more than is available.'],
+    ['#/order/ORD-1039', 'A <b>Pickup order</b> that is ready. The customer is at the counter. Click <b>Release to customer</b>.'],
+    ['#/release/ORD-1039', '<b>Release checklist.</b> Tick every line, or tap <b>Scan</b>. Release stays <b>locked</b> until every item is counted and its condition recorded.'],
+    ['#/sign/ORD-1039', '<b>Customer clearance.</b> The customer signs that they received exactly these items, in this condition. Draw a signature to try it.'],
+    ['#/clearance/ORD-1040', 'A <b>signed clearance</b> from a delivery, signed on the phone at the event venue. Printable, and saved on the order.'],
+    ['#/return/ORD-1037', '<b>Processing a return.</b> The released list is shown next to what came back. Change a number or a condition to see shortfalls and damage get flagged.'],
+    ['#/order/ORD-1036', 'A <b>returned order with a discrepancy</b>: 2 chairs missing, 2 damaged, and a tent that came back torn.'],
+    ['#/damage/DMG-0092', 'A <b>damage report</b>. It links the exact tent unit to the order, the customer, and the clearance they signed when it left in good condition.'],
+    ['#/item/TNT-1020/TNT-1020-007', '<b>Per-unit tracking</b> for valuable items. Each tent has its own code and full history: every event, every damage report, every repair.'],
+    ['#/inventory', '<b>Inventory</b>: filter by warehouse, category or condition. Chairs and tables are tracked by count; tents and sound gear per unit.'],
+    ['#/labels', '<b>QR labels.</b> Print on A4 sticker paper with any printer, or use a small thermal label printer. These QR codes are real; try scanning one.'],
+    ['#/phone', '<b>On the phone.</b> Staff open WIMS in the phone browser: scan with the camera, and get the clearance signed at the venue. No app to install.'],
+    ['#/adjustments', '<b>Stock adjustments.</b> Staff record stock-ins and changes; write-offs and transfers wait for Admin approval.'],
+    ['#/reports', '<b>Reports</b>: inventory, deliveries and operations, including discrepancies and damage per item.'],
+    ['#/settings', '<b>Settings</b>: users, roles and the company profile. Try switching to <b>Staff</b> at the top to see what a staff member sees.'],
+  ];
+  const PAGE_TEXT = {
+    dashboard: 'The dashboard.', inventory: 'Inventory list.', item: 'Item details: stock per warehouse, the QR label, and units.', warehouses: 'Warehouse locations and their stock.',
+    categories: 'Item categories.', orders: 'All orders, delivery and pickup.', 'orders/new': 'Create an order.', order: 'Order details.', release: 'Release checklist: every line must be checked before release.',
+    sign: 'Clearance: the receiver signs for exactly what they received.', clearance: 'Signed clearance, ready to print.', return: 'Return processing.', damage: 'Damage and loss reports.',
+    adjustments: 'Stock adjustments.', reports: 'Reports.', notifications: 'Notifications.', settings: 'Settings.', labels: 'QR labels.', phone: 'Phone screens.',
+  };
+  function guideBar(route, key) {
+    if (!S.guide) return '';
+    const i = TOUR.findIndex(t => t[0] === route);
+    if (i >= 0) S.lastTour = i;
+    const total = TOUR.length;
+    if (i >= 0) {
+      const prev = i > 0 ? `<a class="prev" href="${TOUR[i - 1][0]}">← Back</a>` : '';
+      const next = i < total - 1 ? `<a href="${TOUR[i + 1][0]}">Next →</a>` : `<a href="#/dashboard">Finish tour ✓</a>`;
+      return `<div class="guide no-print"><span class="step">Tour ${i + 1} / ${total}</span><p>${TOUR[i][1]}</p>${prev}${next}<button class="hide" data-act="hide-guide">Hide</button></div>`;
+    }
+    return `<div class="guide no-print"><span class="step">Exploring</span><p>${PAGE_TEXT[key] || ''} Everything here is sample data.</p><a href="${TOUR[Math.min(S.lastTour + 1, total - 1)][0]}">Continue tour →</a><button class="hide" data-act="hide-guide">Hide</button></div>`;
+  }
+
+  // ---------- shell ----------
+  function shell(key, route, body, pageKey) {
+    const admin = S.role === 'admin';
+    const pendingAdj = D.adjustments.filter(a => a.status === 'Pending approval').length;
+    const navItem = (href, k, icon, label, extra = '') => `<a href="${href}" class="${key === k ? 'on' : ''}">${ic(icon)}${label}${extra}</a>`;
+    const unread = D.notifications.length;
+    return `<div class="shell">
+      <aside class="side no-print">
+        <div class="brand"><div class="brand-mark">WI</div><div><b>WIMS</b><small>Sample Events Rental Co.</small></div></div>
+        <nav class="nav">
+          ${navItem('#/dashboard', 'dashboard', 'dash', 'Dashboard')}
+          <div class="nav-group">Stock</div>
+          ${navItem('#/inventory', 'inventory', 'box', 'Inventory')}
+          ${admin ? navItem('#/warehouses', 'warehouses', 'wh', 'Warehouses') : ''}
+          ${admin ? navItem('#/categories', 'categories', 'tag', 'Categories') : ''}
+          ${navItem('#/adjustments', 'adjustments', 'adj', 'Adjustments', admin && pendingAdj ? `<span class="count">${pendingAdj}</span>` : '')}
+          ${navItem('#/labels', 'labels', 'qr', 'QR labels')}
+          <div class="nav-group">Orders</div>
+          ${navItem('#/orders', 'orders', 'clip', 'Orders')}
+          ${navItem('#/damage', 'damage', 'wrench', 'Damage & loss')}
+          ${navItem('#/phone', 'phone', 'phone', 'On the phone')}
+          ${admin ? `<div class="nav-group">Admin</div>${navItem('#/reports', 'reports', 'chart', 'Reports')}${navItem('#/settings', 'settings', 'gear', 'Settings')}` : ''}
+        </nav>
+        <div class="side-foot">Mockup · sample data only<br>Package 1 (web app)</div>
+      </aside>
+      <div class="main">
+        <header class="topbar no-print">
+          <div class="search">${ic('search')}<input id="q" placeholder="Search items, SKUs, unit codes, orders…" value="${esc(S.q)}"></div>
+          <div class="spacer"></div>
+          <div class="role-switch" title="Switch role to compare views"><button class="${admin ? 'on' : ''}" data-role="admin">Admin</button><button class="${admin ? '' : 'on'}" data-role="staff">Staff</button></div>
+          <a class="bell" href="#/notifications">${ic('bell')}<i>${unread}</i></a>
+          <div class="me"><div class="avatar">${me().name.split(' ').map(x => x[0]).join('')}</div><div><b>${me().name}</b><small>${admin ? 'Admin · All warehouses' : 'Staff · Pasig Main, Las Piñas'}</small></div></div>
+        </header>
+        ${guideBar(route, pageKey)}
+        <div class="page">${body}</div>
+      </div>
+    </div>`;
+  }
+
+  // ---------- pages ----------
+  const pages = {};
+
+  pages.dashboard = () => {
+    const whs = me().whs;
+    let total = 0, out = 0, repair = 0;
+    for (const it of D.items) { const s = stats(it, whs); total += s.total; out += s.out; repair += s.dmg + s.rep; }
+    const orders = visibleOrders();
+    const active = orders.filter(o => o.status !== 'Returned');
+    const deliveries = active.filter(o => o.type === 'delivery').length;
+    const low = lowStock(whs);
+    const pending = D.adjustments.filter(a => a.status === 'Pending approval');
+    const disc = orders.filter(o => o.discrepancy);
+    const greet = S.role === 'admin' ? 'Good morning, Juan' : 'Good morning, Maria';
+    const scope = S.role === 'admin' ? 'All 4 warehouses' : 'Pasig Main and Las Piñas (your assigned warehouses)';
+    return head(greet, `${scope} · Wednesday, Nov 4, 2026`, `<a class="btn" href="#/phone">${ic('cam')}Scan</a><a class="btn primary" href="#/orders/new">${ic('plus')}New order</a>`) + `
+      <div class="grid g4">
+        ${kpi('Total stock', n(total), 'pieces across all conditions', 'box')}
+        ${kpi('Active orders', active.length, `${deliveries} deliveries · ${active.length - deliveries} pickups`, 'clip')}
+        ${kpi('Out at events', n(out), 'released and not yet returned', 'truck', 'ok')}
+        ${kpi('Needs repair', repair, 'damaged or for repair', 'wrench', 'bad')}
+      </div>
+      <div class="grid g-main" style="margin-top:16px">
+        <div class="card">
+          <div class="card-h"><h3>Active orders</h3><a href="#/orders" class="sub">View all →</a></div>
+          <table class="tbl"><tr><th>Order</th><th>Type</th><th>From</th><th>Date</th><th>Status</th></tr>
+          ${active.map(o => `<tr class="click" data-go="#/order/${o.id}"><td><b>${esc(o.event)}</b><small>${o.id} · ${esc(o.venue)}</small></td><td>${typeTag(o)}</td><td>${wh(o.wh).name}</td><td>${o.date}</td><td>${statusPill(o)}</td></tr>`).join('')}
+          </table>
+        </div>
+        <div class="stack">
+          <div class="card"><div class="card-h"><h3>Needs attention</h3></div><ul class="feed">
+            ${low.map(x => `<li><span class="dot warn"></span><div><a href="#/item/${x.it.sku}">Low stock: ${esc(x.it.name)}</a><small>${x.w.name}: ${x.s.avail} available, alert at ${x.it.low}</small></div></li>`).join('')}
+            ${disc.map(o => `<li><span class="dot bad"></span><div><a href="#/order/${o.id}">Return discrepancy: ${esc(o.event)}</a><small>${o.id} · missing or damaged items</small></div></li>`).join('')}
+            ${S.role === 'admin' ? pending.map(a => `<li><span class="dot"></span><div><a href="#/adjustments">${a.type} waiting for approval</a><small>${a.qty} × ${esc(item(a.sku).name)} · by ${a.by}</small></div></li>`).join('') : ''}
+          </ul></div>
+          <div class="card"><div class="card-h"><h3>Recent activity</h3></div><ul class="feed">
+            <li><span class="dot ok"></span><div>ORD-1040 delivered, clearance signed by Carla Reyes<small>Yesterday 2:14 PM · Alabang Country Club</small></div></li>
+            <li><span class="dot"></span><div>100 Chair Sash (Gold) stocked in at Pasig Main<small>Nov 2 · Maria Santos</small></div></li>
+            <li><span class="dot bad"></span><div>TNT-1020-007 returned torn, marked for repair<small>Oct 27 · ORD-1036 Dela Cruz Wedding</small></div></li>
+            <li><span class="dot"></span><div>3 tables repaired, moved back to good<small>Oct 30 · Juan Dela Cruz</small></div></li>
+          </ul></div>
+        </div>
+      </div>`;
+  };
+
+  pages.inventory = () => {
+    const whs = me().whs;
+    const f = S.invFilter || (S.invFilter = { wh: '', cat: '', cond: '' });
+    const q = S.q.toLowerCase();
+    const rows = D.items.filter(it => {
+      if (f.cat && it.cat !== f.cat) return false;
+      if (q && !(it.name.toLowerCase().includes(q) || it.sku.toLowerCase().includes(q) || (it.units || []).some(u => u.code.toLowerCase().includes(q)))) return false;
+      const s = stats(it, f.wh || whs);
+      if (s.total === 0) return false;
+      if (f.cond === 'good' && !s.good) return false;
+      if (f.cond === 'damaged' && !s.dmg) return false;
+      if (f.cond === 'repair' && !s.rep) return false;
+      return true;
+    });
+    const whOpts = D.warehouses.filter(w => myWh(w.id)).map(w => `<option value="${w.id}" ${f.wh === w.id ? 'selected' : ''}>${w.name}</option>`).join('');
+    return head('Inventory', `${rows.length} items${S.q ? ` matching “${esc(S.q)}”` : ''}`, `${S.role === 'admin' ? `<button class="btn primary" data-act="add-item">${ic('plus')}Add item</button>` : ''}`) + `
+      <div class="filters">
+        <select class="in" data-filter="wh"><option value="">${S.role === 'admin' ? 'All warehouses' : 'My warehouses'}</option>${whOpts}</select>
+        <select class="in" data-filter="cat"><option value="">All categories</option>${D.categories.map(c => `<option value="${c.id}" ${f.cat === c.id ? 'selected' : ''}>${c.name}</option>`).join('')}</select>
+        <select class="in" data-filter="cond"><option value="">Any condition</option><option value="good" ${f.cond === 'good' ? 'selected' : ''}>Has good stock</option><option value="damaged" ${f.cond === 'damaged' ? 'selected' : ''}>Has damaged</option><option value="repair" ${f.cond === 'repair' ? 'selected' : ''}>Has for repair</option></select>
+        ${S.q ? `<button class="btn" data-act="clear-q">${ic('x')}Clear search</button>` : ''}
+      </div>
+      <div class="card"><table class="tbl">
+        <tr><th>Item</th><th>Category</th><th>Tracked</th><th>Stock</th><th class="num">Available</th><th class="num">Total</th></tr>
+        ${rows.map(it => { const s = stats(it, f.wh || whs); const lowFlag = lowStock(f.wh ? [f.wh] : whs).some(x => x.it === it);
+          return `<tr class="click" data-go="#/item/${it.sku}"><td><div class="cell-item">${thumb(it)}<div><b>${esc(it.name)}</b><small class="mono">${it.sku}</small></div></div></td><td>${cat(it.cat).name}</td><td>${it.track === 'unit' ? '<span class="pill info nodot">Per unit</span>' : '<span class="pill mute nodot">By count</span>'}</td><td>${stockBox(s)}</td><td class="num"><b>${n(s.avail)}</b>${lowFlag ? '<small style="color:var(--warn)">low stock</small>' : ''}</td><td class="num">${n(s.total)}</td></tr>`; }).join('') || `<tr><td colspan="6" class="empty">No items match.</td></tr>`}
+      </table></div>`;
+  };
+
+  pages.item = (sku, unitCode) => {
+    const it = item(sku); if (!it) return notFound();
+    const whs = D.warehouses.filter(w => myWh(w.id));
+    const tot = stats(it, me().whs);
+    let unitsHtml = '';
+    if (it.track === 'unit') {
+      const sel = unitCode || it.units.find(u => D.unitHistory[u.code])?.code;
+      const hist = D.unitHistory[sel] || [{ date: 'Sep 2, 2026', text: 'Added to stock. Label printed.' }];
+      const us = it.units.filter(u => myWh(u.wh));
+      unitsHtml = `<div class="grid g-main" style="margin-top:16px">
+        <div class="card"><div class="card-h"><h3>Units</h3><span class="sub">${us.length} units, each with its own QR code</span></div>
+          <table class="tbl"><tr><th>Unit code</th><th>Warehouse</th><th>Condition</th><th>Where now</th></tr>
+          ${us.map(u => { const o = unitOrder(u.code), r = unitReserved(u.code);
+            return `<tr class="click ${u.code === sel ? 'flag' : ''}" data-go="#/item/${sku}/${u.code}"><td class="mono"><b>${u.code}</b></td><td>${wh(u.wh).name}</td><td>${condPill(u.cond)}</td><td>${o ? `Out on <a href="#/order/${o.id}">${o.id}</a>` : r ? `Reserved for <a href="#/order/${r.id}">${r.id}</a>` : 'In warehouse'}</td></tr>`; }).join('')}
+          </table></div>
+        <div class="card"><div class="card-h"><h3>History of <span class="mono">${sel}</span></h3></div>
+          <div class="card-b" style="display:flex;gap:16px;align-items:flex-start"><div style="width:84px;flex-shrink:0">${qrSvg('WIMS:' + sel)}</div><div style="font-size:12.5px;color:var(--ink-2)">Scan this code on the unit's label to open it here, or to tick it off on a checklist.</div></div>
+          <ul class="feed">${hist.map(h => `<li><span class="dot ${h.tone || ''}"></span><div>${esc(h.text)}<small>${h.date}</small></div></li>`).join('')}</ul></div>
+      </div>`;
+    }
+    return head(esc(it.name), `<span class="mono">${it.sku}</span> · ${cat(it.cat).name} · ${it.track === 'unit' ? 'Tracked per unit' : 'Tracked by count'} · low-stock alert below ${it.low}`,
+      `<a class="btn" href="#/labels?sku=${it.sku}">${ic('print')}Print labels</a>${S.role === 'admin' ? `<button class="btn" data-act="toast" data-msg="Edit item (mockup)">Edit</button>` : ''}`,
+      `<a href="#/inventory">Inventory</a> / ${it.sku}`) + `
+      <div class="grid g4">
+        ${kpi('Good', n(tot.good), `${n(tot.avail)} available, ${n(tot.reserved)} reserved`, 'check', 'ok')}
+        ${kpi('Out at events', n(tot.out), 'released on orders', 'truck')}
+        ${kpi('Damaged', n(tot.dmg), 'needs decision', 'alert', 'bad')}
+        ${kpi('For repair', n(tot.rep), 'being fixed', 'wrench', 'warn')}
+      </div>
+      <div class="card" style="margin-top:16px"><div class="card-h"><h3>Stock per warehouse</h3></div>
+        <table class="tbl"><tr><th>Warehouse</th><th class="num">Good</th><th class="num">Reserved</th><th class="num">Available</th><th class="num">Out</th><th class="num">Damaged</th><th class="num">For repair</th></tr>
+        ${whs.map(w => { const s = stats(it, w.id); if (!s.total) return ''; const low = s.avail < it.low;
+          return `<tr class="${low ? 'flag' : ''}"><td><b>${w.name}</b>${low ? '<small style="color:var(--warn)">Low stock</small>' : ''}</td><td class="num">${n(s.good)}</td><td class="num">${n(s.reserved)}</td><td class="num"><b>${n(s.avail)}</b></td><td class="num">${n(s.out)}</td><td class="num">${s.dmg}</td><td class="num">${s.rep}</td></tr>`; }).join('')}
+        </table></div>${unitsHtml}`;
+  };
+
+  pages.warehouses = () => head('Warehouses', '4 of 5 included locations in use', `<button class="btn primary" data-act="toast" data-msg="Add warehouse form (mockup)">${ic('plus')}Add warehouse</button>`) + `
+    <div class="grid g2">${D.warehouses.map(w => {
+      let pcs = 0, out = 0, rep = 0; for (const it of D.items) { const s = stats(it, w.id); pcs += s.total; out += s.out; rep += s.dmg + s.rep; }
+      const active = D.orders.filter(o => o.wh === w.id && o.status !== 'Returned').length;
+      return `<div class="card"><div class="card-h"><div class="cell-item"><div class="thumb">${ic('wh')}</div><div><b>${w.name}</b><small style="color:var(--ink-3)">${esc(w.address)}</small></div></div><span class="pill ok">Active</span></div>
+        <div class="card-b"><p style="margin:0 0 12px;color:var(--ink-2)">${esc(w.description)}</p>
+        <div class="grid g4" style="gap:10px;text-align:center">
+          <div><div style="font-size:20px;font-weight:800">${n(pcs)}</div><small style="color:var(--ink-3)">pieces</small></div>
+          <div><div style="font-size:20px;font-weight:800">${n(out)}</div><small style="color:var(--ink-3)">out</small></div>
+          <div><div style="font-size:20px;font-weight:800">${rep}</div><small style="color:var(--ink-3)">repair/damaged</small></div>
+          <div><div style="font-size:20px;font-weight:800">${active}</div><small style="color:var(--ink-3)">active orders</small></div>
+        </div></div></div>`; }).join('')}
+      <div class="card" style="display:grid;place-items:center;border-style:dashed;min-height:180px;color:var(--ink-3)"><div style="text-align:center">${ic('plus', 'style="width:26px"')}<div style="font-weight:700;margin-top:6px">1 more location included</div><small>Extra warehouses beyond 5 are billed as a one-time setup fee</small></div></div>
+    </div>`;
+
+  pages.categories = () => head('Categories', 'How items are grouped', `<button class="btn primary" data-act="toast" data-msg="Add category (mockup)">${ic('plus')}Add category</button>`) + `
+    <div class="card"><table class="tbl"><tr><th>Category</th><th class="num">Items</th><th class="num">Pieces</th><th>Tracked</th></tr>
+    ${D.categories.map(c => { const its = D.items.filter(i => i.cat === c.id); const pcs = its.reduce((a, i) => a + stats(i).total, 0); const tr = [...new Set(its.map(i => i.track === 'unit' ? 'Per unit' : 'By count'))].join(', ');
+      return `<tr><td><div class="cell-item"><div class="thumb">${ic(catIcon[c.id])}</div><b>${c.name}</b></div></td><td class="num">${its.length}</td><td class="num">${n(pcs)}</td><td>${tr || '-'}</td></tr>`; }).join('')}</table></div>`;
+
+  pages.orders = () => {
+    const tab = S.orderTab || 'all';
+    const os = visibleOrders().filter(o => tab === 'all' || (tab === 'delivery' && o.type === 'delivery') || (tab === 'pickup' && o.type === 'pickup') || (tab === 'out' && OUT.includes(o.status)) || (tab === 'returned' && o.status === 'Returned'));
+    const t = (k, l) => `<button class="${tab === k ? 'on' : ''}" data-tab="${k}">${l}</button>`;
+    return head('Orders', 'Deliveries to events and customer pickups', `<a class="btn primary" href="#/orders/new">${ic('plus')}New order</a>`) + `
+      <div class="tabs">${t('all', 'All')}${t('delivery', 'Delivery')}${t('pickup', 'Pickup')}${t('out', 'Out now')}${t('returned', 'Returned')}</div>
+      <div class="card"><table class="tbl"><tr><th>Order</th><th>Type</th><th>Customer</th><th>Warehouse</th><th>Event date</th><th class="num">Pieces</th><th>Status</th></tr>
+      ${os.map(o => `<tr class="click" data-go="#/order/${o.id}"><td><b>${esc(o.event)}</b><small>${o.id} · ${esc(o.venue)}</small></td><td>${typeTag(o)}</td><td>${esc(cust(o.cust).name)}</td><td>${wh(o.wh).name}</td><td>${o.date}<small>Return ${o.returnDate}</small></td><td class="num">${n(o.lines.reduce((a, l) => a + lineQty(l), 0))}</td><td>${statusPill(o)}</td></tr>`).join('') || '<tr><td colspan="7" class="empty">No orders here.</td></tr>'}
+      </table></div>`;
+  };
+
+  pages['orders/new'] = () => {
+    const f = S.newOrder || (S.newOrder = { type: 'delivery', wh: 'PSG', lines: [{ sku: 'CHR-TIF-WHT', qty: 100 }, { sku: 'TNT-1020', qty: 1 }] });
+    const whOpts = D.warehouses.filter(w => myWh(w.id)).map(w => `<option value="${w.id}" ${f.wh === w.id ? 'selected' : ''}>${w.name}</option>`).join('');
+    const lines = f.lines.map((l, i) => {
+      const it = item(l.sku), s = stats(it, f.wh), ok = l.qty <= s.avail;
+      return `<div class="order-line"><select class="in" data-line="${i}" data-k="sku">${D.items.map(x => `<option value="${x.sku}" ${x.sku === l.sku ? 'selected' : ''}>${esc(x.name)} (${x.sku})</option>`).join('')}</select>
+        <input class="in" type="number" min="1" value="${l.qty}" data-line="${i}" data-k="qty">
+        <span class="avail ${ok ? 'ok' : 'bad'}">${ok ? '✓' : '✕'} ${n(s.avail)} available${it.track === 'unit' && ok ? '<br><small style="font-weight:500;color:var(--ink-3)">units assigned at release</small>' : ''}${!ok ? '<br><small style="font-weight:500">not enough in this warehouse</small>' : ''}</span>
+        <button class="btn sm" data-act="rm-line" data-i="${i}">${ic('x')}</button></div>`; }).join('');
+    const bad = f.lines.some(l => l.qty > stats(item(l.sku), f.wh).avail);
+    return head('New order', 'The system checks stock in the selected warehouse as you add items', '', '<a href="#/orders">Orders</a> / New') + `
+      <div class="grid g-main">
+        <div class="card"><div class="card-b">
+          <div class="field"><label class="f">How does the customer get the items?</label>
+            <div class="choice">
+              <label class="${f.type === 'delivery' ? 'on' : ''}"><input type="radio" name="t" value="delivery" ${f.type === 'delivery' ? 'checked' : ''} data-k="type"><div><b>${ic('truck', 'style="width:15px;vertical-align:-2px"')} Delivery</b><small>We bring the items to the event venue. Receiver signs on site.</small></div></label>
+              <label class="${f.type === 'pickup' ? 'on' : ''}"><input type="radio" name="t" value="pickup" ${f.type === 'pickup' ? 'checked' : ''} data-k="type"><div><b>${ic('hand', 'style="width:15px;vertical-align:-2px"')} Pickup</b><small>Customer collects at the warehouse. Signs at the counter.</small></div></label>
+            </div></div>
+          <div class="grid g2" style="gap:12px">
+            <div class="field"><label class="f">Customer</label><input class="in" value="Mendoza Family" id="no-cust"></div>
+            <div class="field"><label class="f">Event name</label><input class="in" value="Mendoza 50th Anniversary" id="no-event"></div>
+            ${f.type === 'delivery' ? '<div class="field"><label class="f">Venue address</label><input class="in" value="Fernwood Gardens, Quezon City" id="no-venue"></div>' : ''}
+            <div class="field"><label class="f">Warehouse</label><select class="in" data-k="wh">${whOpts}</select></div>
+            <div class="field"><label class="f">${f.type === 'delivery' ? 'Delivery date' : 'Pickup date'}</label><input class="in" value="Nov 14, 2026"></div>
+            <div class="field"><label class="f">Return date</label><input class="in" value="Nov 15, 2026"></div>
+          </div>
+          <label class="f" style="margin-top:6px">Items</label>
+          ${lines}
+          <button class="btn sm" data-act="add-line">${ic('plus')}Add item</button>
+        </div></div>
+        <div class="stack"><div class="card"><div class="card-h"><h3>Summary</h3></div><div class="card-b">
+          <dl class="dl"><dt>Type</dt><dd>${f.type === 'delivery' ? 'Delivery' : 'Pickup'}</dd><dt>Warehouse</dt><dd>${wh(f.wh).name}</dd><dt>Pieces</dt><dd>${n(f.lines.reduce((a, l) => a + Number(l.qty || 0), 0))}</dd></dl>
+          <div style="margin-top:14px">${bad ? note('Some items are short in this warehouse. Lower the quantity, or pick another warehouse.', 'bad') : note('Stock is available. It will be <b>reserved</b> as soon as the order is saved, so no one else can book it.', 'ok')}</div>
+          <button class="btn primary" style="width:100%;justify-content:center;margin-top:14px" data-act="save-order" ${bad ? 'disabled' : ''}>Save order</button>
+        </div></div></div>
+      </div>`;
+  };
+
+  pages.order = id => {
+    const o = order(id); if (!o) return notFound();
+    const c = cust(o.cust), flow = FLOW[o.type], idx = flow.indexOf(o.status);
+    const tl = flow.map((st, i) => `<div class="st ${i < idx || o.status === 'Returned' ? 'done' : i === idx ? 'now' : ''}"><div class="b">${i < idx || o.status === 'Returned' ? ic('check') : ''}</div>${st}</div>`).join('');
+    const rel = S.release[id];
+    let action = '';
+    if (o.status === 'Preparing' && o.type === 'pickup') action = `<button class="btn primary" data-act="status" data-to="Ready for Pickup">Mark ready for pickup</button>`;
+    else if (o.status === 'Preparing') action = `<a class="btn primary" href="#/release/${id}">${ic('clip')}Start release checklist</a>`;
+    else if (o.status === 'Ready for Pickup') action = `<a class="btn primary" href="#/release/${id}">${ic('hand')}Release to customer</a>`;
+    else if (o.status === 'In Transit') action = `<a class="btn primary" href="#/sign/${id}">${ic('sign')}Hand over at venue (receiver signs)</a>`;
+    else if (o.status === 'Delivered') action = `<button class="btn primary" data-act="status" data-to="Returning">${ic('truck')}Collect from venue</button>`;
+    else if (o.status === 'Returning' || o.status === 'Picked Up') action = `<a class="btn primary" href="#/return/${id}">${ic('ret')}Process return</a>`;
+    const dmgs = D.damage.filter(d => d.order === id);
+    const lineRows = o.lines.map((l, i) => {
+      const it = item(l.sku);
+      const relC = rel ? (l.units ? l.units.map(u => rel.cond[u] || 'good') : [rel.cond['L' + i] || 'good']) : null;
+      let back = '';
+      if (o.status === 'Returned') {
+        if (l.units) back = l.units.map(u => `<span class="mono">${u.slice(-3)}</span> ${condPill((l.unitBack || {})[u] || 'good')}`).join('<br>');
+        else { const miss = l.qty - l.back; back = `${n(l.back)} back${l.dmg ? `, <b style="color:var(--bad)">${l.dmg} damaged</b>` : ''}${l.rep ? `, <b style="color:var(--warn)">${l.rep} for repair</b>` : ''}${miss ? `, <b style="color:var(--bad)">${miss} missing</b>` : ''}`; }
+      }
+      return `<tr class="${o.status === 'Returned' && ((l.back !== undefined && (l.back < l.qty || l.dmg || l.rep)) || Object.values(l.unitBack || {}).some(x => x !== 'good')) ? 'flag' : ''}"><td>${lineLabel(l)}</td><td>${l.units ? l.units.map(u => `<span class="mono">${u}</span>`).join('<br>') : '-'}</td><td class="num">${n(lineQty(l))}</td><td>${relC ? [...new Set(relC)].map(condPill).join(' ') : (o.clearance ? condPill('good') : '<span style="color:var(--ink-3)">Not released yet</span>')}</td>${o.status === 'Returned' ? `<td>${back}</td>` : ''}</tr>`; }).join('');
+    return head(`${esc(o.event)}`, `${o.id} · ${typeTag(o)} · ${statusPill(o)}`, action, `<a href="#/orders">Orders</a> / ${o.id}`) + `
+      <div class="card"><div class="card-b"><div class="timeline">${tl}</div></div></div>
+      <div class="grid g-main" style="margin-top:16px">
+        <div class="card"><div class="card-h"><h3>Items</h3><span class="sub">${n(o.lines.reduce((a, l) => a + lineQty(l), 0))} pieces</span></div>
+          <table class="tbl"><tr><th>Item</th><th>Units</th><th class="num">Qty</th><th>Condition at release</th>${o.status === 'Returned' ? '<th>Returned</th>' : ''}</tr>${lineRows}</table></div>
+        <div class="stack">
+          <div class="card"><div class="card-h"><h3>Details</h3></div><div class="card-b"><dl class="dl">
+            <dt>Customer</dt><dd>${esc(c.name)}</dd><dt>Contact</dt><dd>${esc(c.contact)} · ${c.phone}</dd>
+            <dt>${o.type === 'delivery' ? 'Venue' : 'Pickup at'}</dt><dd>${esc(o.venue)}</dd><dt>Warehouse</dt><dd>${wh(o.wh).name}</dd>
+            <dt>${o.type === 'delivery' ? 'Delivery' : 'Pickup'}</dt><dd>${o.date}</dd><dt>Return</dt><dd>${o.returnDate}</dd></dl></div></div>
+          <div class="card"><div class="card-h"><h3>Clearance</h3>${o.clearance ? '<span class="pill ok">Signed</span>' : '<span class="pill mute">Not signed yet</span>'}</div><div class="card-b">
+            ${o.clearance ? `<div class="sig-img">${S.sigs[id] ? `<img src="${S.sigs[id]}">` : scribble(o.clearance.by)}</div><p style="margin:8px 0 12px;font-size:13px"><b>${esc(o.clearance.by)}</b>, ${esc(o.clearance.role)}<br><span style="color:var(--ink-3)">${o.clearance.at} · ${esc(o.clearance.where)}</span></p><a class="btn sm" href="#/clearance/${id}">${ic('eye')}View / print clearance</a>`
+              : `<p style="margin:0;color:var(--ink-2);font-size:13px">${o.type === 'pickup' ? 'The customer signs at the counter after the release checklist is complete.' : 'The receiver signs at the venue on the staff member\'s phone when the items are handed over.'}</p>`}
+          </div></div>
+          ${dmgs.length ? `<div class="card"><div class="card-h"><h3>Damage &amp; loss</h3><span class="pill bad">${dmgs.length}</span></div><ul class="feed">${dmgs.map(d => `<li><span class="dot bad"></span><div><a href="#/damage/${d.id}">${d.id}: ${esc(item(d.sku).name)}${d.unit ? ` <span class="mono">${d.unit}</span>` : ` × ${d.qty}`}</a><small>${condName(d.before)} → ${condName(d.after)} · ${d.status}</small></div></li>`).join('')}</ul></div>` : ''}
+        </div>
+      </div>`;
+  };
+
+  pages.release = id => {
+    const o = order(id); if (!o) return notFound();
+    if (!['Preparing', 'Ready for Pickup'].includes(o.status)) return head('Release checklist', `${o.id} has already been released.`) + `<a class="btn" href="#/order/${id}">Back to order</a>`;
+    const r = S.release[id] || (S.release[id] = { ticks: {}, cond: {} });
+    const keys = []; o.lines.forEach((l, i) => l.units ? l.units.forEach(u => keys.push(u)) : keys.push('L' + i));
+    const done = keys.filter(k => r.ticks[k]).length, all = done === keys.length;
+    const condSel = k => `<select class="in" data-cond="${k}">${['good', 'minor', 'damaged'].map(c => `<option value="${c}" ${(r.cond[k] || 'good') === c ? 'selected' : ''}>${condName(c)}</option>`).join('')}</select>`;
+    const tick = k => `<button class="tick ${r.ticks[k] ? 'on' : ''}" data-tick="${k}">${ic('check')}</button>`;
+    const rows = o.lines.map((l, i) => {
+      const it = item(l.sku);
+      if (!l.units) return `<div class="check-row ${r.ticks['L' + i] ? 'done' : ''}" id="row-L${i}">${tick('L' + i)}<div class="lab">${lineLabel(l)}</div><div><b>${n(l.qty)} pcs</b><small style="display:block;color:var(--ink-3)">counted</small></div>${condSel('L' + i)}</div>`;
+      return `<div class="check-group"><div class="check-group-h">${thumb(it)}<div>${esc(it.name)} <small class="mono" style="color:var(--ink-3)">${it.sku}</small><small style="display:block;color:var(--ink-3);font-weight:500">Tracked per unit: check each one</small></div></div>
+        ${l.units.map(u => `<div class="check-row unit ${r.ticks[u] ? 'done' : ''}" id="row-${u}">${tick(u)}<div class="lab"><b class="mono">${u}</b></div><div>1 unit</div>${condSel(u)}</div>`).join('')}</div>`;
+    }).join('');
+    const isPickup = o.type === 'pickup';
+    return head('Release checklist', `${o.id} · ${esc(o.event)} · ${typeTag(o)} · from ${wh(o.wh).name}`, `<button class="btn" data-act="scan" data-id="${id}">${ic('cam')}Scan next item</button>`, `<a href="#/orders">Orders</a> / <a href="#/order/${id}">${o.id}</a> / Release`) + `
+      <div class="grid g-main">
+        <div class="card"><div class="card-h"><h3>Count every line and record its condition</h3><span class="sub">${done} of ${keys.length} checked</span></div>${rows}</div>
+        <div class="stack"><div class="card"><div class="card-b">
+          <div style="display:flex;justify-content:space-between;font-weight:700;margin-bottom:8px"><span>Progress</span><span>${Math.round(done / keys.length * 100)}%</span></div>
+          <div class="progress"><div style="width:${done / keys.length * 100}%"></div></div>
+          <div style="margin:16px 0">${all ? note(`All ${keys.length} lines checked. ${isPickup ? 'The customer can now sign the clearance.' : 'The order can be dispatched. The receiver signs at the venue.'}`, 'ok') : note(`<b>Release is locked</b> until every line is checked. ${keys.length - done} left.`, 'warn')}</div>
+          ${isPickup ? (all ? `<a class="btn primary" style="width:100%;justify-content:center" href="#/sign/${id}">${ic('sign')}Continue to customer clearance</a>` : `<button class="btn primary" style="width:100%;justify-content:center" disabled>${ic('sign')}Continue to customer clearance</button>`)
+            : `<button class="btn primary" style="width:100%;justify-content:center" data-act="dispatch" data-id="${id}" ${all ? '' : 'disabled'}>${ic('truck')}Dispatch: mark In Transit</button>`}
+          <p style="font-size:12px;color:var(--ink-3);margin:12px 0 0">Released by ${me().name} · ${wh(o.wh).name}. Conditions recorded here are printed on the clearance.</p>
+        </div></div></div>
+      </div>`;
+  };
+
+  function signForm(o, compact) {
+    const c = cust(o.cust), r = S.release[o.id];
+    const items = o.lines.map((l, i) => { const it = item(l.sku);
+      const conds = l.units ? l.units.map(u => `<span class="mono">${u}</span> ${condPill(r?.cond[u] || 'good')}`).join('<br>') : `${n(l.qty)} pcs ${condPill(r?.cond['L' + i] || 'good')}`;
+      return compact ? `<div class="r"><div style="flex:1"><b>${esc(it.name)}</b><div style="font-size:11px;color:var(--ink-3)">${l.units ? l.units.length + ' units' : n(l.qty) + ' pcs'} · ${condName(l.units ? 'good' : (r?.cond['L' + i] || 'good'))}</div></div></div>`
+        : `<tr><td>${lineLabel(l)}</td><td>${conds}</td></tr>`; }).join('');
+    const statement = `I confirm that I received the items listed above, complete and in the condition stated, for <b>${esc(o.event)}</b>. I am responsible for returning them in the same condition by <b>${o.returnDate}</b>.`;
+    return { items, statement, c };
+  }
+
+  pages.sign = id => {
+    const o = order(id); if (!o) return notFound();
+    if (o.clearance) return head('Clearance', 'Already signed.') + `<a class="btn" href="#/clearance/${id}">View clearance</a>`;
+    if (o.type === 'pickup') {
+      const r = S.release[id], keys = o.lines.flatMap((l, i) => l.units || ['L' + i]);
+      if (!r || keys.some(k => !r.ticks[k])) return head('Customer clearance', `${o.id} · ${esc(o.event)}`) + note('Finish the release checklist first. The customer signs only after every line is counted.', 'warn') + `<p><a class="btn primary" href="#/release/${id}">Go to release checklist</a></p>`;
+    }
+    if (o.type === 'delivery' && o.status !== 'In Transit') return head('Receiver clearance', `${o.id} is ${o.status}.`) + `<a class="btn" href="#/order/${id}">Back to order</a>`;
+    const { items, statement, c } = signForm(o);
+    const at = o.type === 'pickup' ? `the ${wh(o.wh).name} counter` : esc(o.venue);
+    return head(o.type === 'pickup' ? 'Customer clearance' : 'Receiver clearance at venue', `${o.id} · ${esc(o.event)} · signed at ${at}`, '', `<a href="#/order/${id}">${o.id}</a> / Clearance`) + `
+      <div class="grid g-main">
+        <div class="card"><div class="card-h"><h3>Items being handed over</h3><span class="sub">Condition recorded at release</span></div><table class="tbl"><tr><th>Item</th><th>Qty / units and condition</th></tr>${items}</table></div>
+        <div class="card"><div class="card-h"><h3>Sign to confirm</h3></div><div class="card-b">
+          <p style="margin:0 0 14px;font-size:13.5px;line-height:1.55">${statement}</p>
+          <div class="field"><label class="f">Full name</label><input class="in" id="sig-name" value="${esc(c.contact)}"></div>
+          <div class="field"><label class="f">Relationship to customer</label><select class="in" id="sig-role"><option>${o.type === 'pickup' ? 'Customer' : 'Client representative'}</option><option>Authorized representative</option><option>Venue coordinator</option></select></div>
+          <div class="field"><label class="f">Valid ID (optional)</label><input class="in" placeholder="e.g. Driver's license no."></div>
+          <label class="f">Signature</label>
+          <div class="sig-pad"><canvas id="sig"></canvas><div class="hint">Sign here with a finger or mouse</div></div>
+          <div style="display:flex;justify-content:space-between;margin-top:8px"><button class="btn sm" data-act="sig-clear">Clear</button><small style="color:var(--ink-3)">${now()}</small></div>
+          <button class="btn ok" style="width:100%;justify-content:center;margin-top:14px" id="sig-ok" data-act="sign" data-id="${id}" disabled>${ic('check')}Confirm and sign</button>
+        </div></div>
+      </div>`;
+  };
+
+  pages.clearance = id => {
+    const o = order(id); if (!o || !o.clearance) return notFound();
+    const c = cust(o.cust), r = S.release[id];
+    const rows = o.lines.map((l, i) => { const it = item(l.sku);
+      if (l.units) return l.units.map(u => `<tr><td>${esc(it.name)}</td><td class="mono">${u}</td><td class="num">1</td><td>${condName(r?.cond[u] || 'good')}</td></tr>`).join('');
+      return `<tr><td>${esc(it.name)}</td><td class="mono">${it.sku}</td><td class="num">${n(l.qty)}</td><td>${condName(r?.cond['L' + i] || 'good')}</td></tr>`; }).join('');
+    return `<div class="no-print">${head('Clearance', `${o.id} · ${esc(o.event)}`, `<button class="btn primary" data-act="print">${ic('print')}Print</button><a class="btn" href="#/order/${id}">Back to order</a>`, `<a href="#/order/${id}">${o.id}</a> / Clearance`)}</div>
+      <div class="clearance-doc">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div><div style="font-weight:800;color:var(--blue);font-size:13px;letter-spacing:.04em">SAMPLE EVENTS RENTAL CO.</div><h2>${o.type === 'pickup' ? 'Pickup' : 'Delivery'} Clearance</h2><div class="mono" style="color:var(--ink-3);margin-top:2px">CLR-${o.id.slice(4)} · ${o.id}</div></div>
+          <span class="stamp">SIGNED</span>
+        </div>
+        <dl class="dl" style="margin:22px 0;grid-template-columns:150px 1fr 120px 1fr">
+          <dt>Customer</dt><dd>${esc(c.name)}</dd><dt>Event</dt><dd>${esc(o.event)}</dd>
+          <dt>${o.type === 'pickup' ? 'Released at' : 'Delivered to'}</dt><dd>${esc(o.type === 'pickup' ? wh(o.wh).name + ' warehouse' : o.venue)}</dd><dt>Return by</dt><dd>${o.returnDate}</dd>
+        </dl>
+        <table class="tbl" style="border:1px solid var(--line)"><tr><th>Item</th><th>SKU / Unit</th><th class="num">Qty</th><th>Condition</th></tr>${rows}</table>
+        <p style="margin:22px 0;font-size:13.5px;line-height:1.6">I confirm that I received the items listed above, complete and in the condition stated, for <b>${esc(o.event)}</b>. I am responsible for returning them in the same condition by <b>${o.returnDate}</b>. Missing or damaged items may be charged.</p>
+        <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:30px;margin-top:30px">
+          <div><div class="sig-img">${S.sigs[id] ? `<img src="${S.sigs[id]}">` : scribble(o.clearance.by)}</div><div style="margin-top:6px"><b>${esc(o.clearance.by)}</b><br><small style="color:var(--ink-3)">${esc(o.clearance.role)} · ${o.clearance.at}</small></div></div>
+          <div style="text-align:right"><div style="font-weight:700">Released by: ${o.releasedBy || (o.wh === 'TGG' ? 'Jomar Ramos' : 'Maria Santos')}</div><small style="color:var(--ink-3)">Signed at ${esc(o.clearance.where)}</small></div>
+        </div>
+      </div>`;
+  };
+
+  pages.return = id => {
+    const o = order(id); if (!o) return notFound();
+    if (!['Returning', 'Picked Up'].includes(o.status)) return head('Return', `${o.id} is ${o.status}.`) + `<a class="btn" href="#/order/${id}">Back to order</a>`;
+    const r = S.ret[id] || (S.ret[id] = { back: {}, dmg: {}, rep: {}, unit: {}, scanned: {} });
+    const flags = [];
+    const countRows = o.lines.map((l, i) => {
+      if (l.units) return '';
+      const k = 'L' + i, back = r.back[k] ?? l.qty, dmg = r.dmg[k] ?? 0, rep = r.rep[k] ?? 0;
+      const miss = Math.max(0, l.qty - back), good = Math.max(0, back - dmg - rep);
+      const it = item(l.sku);
+      if (miss) flags.push(`<b>${miss} × ${esc(it.name)}</b> missing`);
+      if (dmg) flags.push(`<b>${dmg} × ${esc(it.name)}</b> damaged`);
+      if (rep) flags.push(`<b>${rep} × ${esc(it.name)}</b> need repair`);
+      return `<div class="ret-row ${miss || dmg || rep ? 'flag' : ''}"><div>${lineLabel(l)}</div><div class="num"><b>${n(l.qty)}</b><small style="display:block;color:var(--ink-3)">good</small></div>
+        <input class="in" type="number" min="0" max="${l.qty}" value="${back}" data-ret="back" data-k="${k}"><input class="in" type="number" min="0" value="${dmg}" data-ret="dmg" data-k="${k}"><input class="in" type="number" min="0" value="${rep}" data-ret="rep" data-k="${k}">
+        <div>${miss ? `<span class="pill bad">${miss} missing</span> ` : ''}${dmg ? `<span class="pill bad">${dmg} damaged</span> ` : ''}${rep ? `<span class="pill warn">${rep} repair</span> ` : ''}${!miss && !dmg && !rep ? `<span class="pill ok">${n(good)} good, complete</span>` : ''}</div></div>`; }).join('');
+    const unitRows = o.lines.filter(l => l.units).map(l => { const it = item(l.sku);
+      return `<div class="check-group-h" style="padding-top:14px">${thumb(it)}<div>${esc(it.name)} <small style="color:var(--ink-3);font-weight:500">· per unit</small></div></div>` + l.units.map(u => {
+        const c = r.unit[u] || 'good'; if (c !== 'good') flags.push(`<b class="mono">${u}</b> ${condName(c).toLowerCase()}`);
+        return `<div class="ret-unit ${c !== 'good' ? 'flag' : ''}"><div><b class="mono">${u}</b> ${r.scanned[u] ? '<span class="pill ok nodot">scanned</span>' : ''}<small style="display:block;color:var(--ink-3)">Released: good</small></div>
+          <select class="in" data-unit="${u}">${['good', 'damaged', 'repair', 'missing'].map(x => `<option value="${x}" ${c === x ? 'selected' : ''}>${condName(x)}</option>`).join('')}</select>
+          <div>${c === 'good' ? '<span class="pill ok">Same as released</span>' : `<span class="pill bad">Good → ${condName(c)}</span>`}</div></div>`; }).join(''); }).join('');
+    return head('Process return', `${o.id} · ${esc(o.event)} · ${esc(cust(o.cust).name)}`, `<button class="btn" data-act="scan-ret" data-id="${id}">${ic('cam')}Scan a unit</button>`, `<a href="#/orders">Orders</a> / <a href="#/order/${id}">${o.id}</a> / Return`) + `
+      <div class="grid g-main">
+        <div class="card"><div class="card-h"><h3>Released vs. returned</h3><span class="sub">Released condition comes from the signed clearance</span></div>
+          ${countRows ? `<div class="ret-row h"><div>Item</div><div class="num">Released</div><div>Returned</div><div>Damaged</div><div>For repair</div><div>Result</div></div>${countRows}` : ''}
+          ${unitRows}
+        </div>
+        <div class="stack"><div class="card"><div class="card-h"><h3>Result</h3></div><div class="card-b">
+          ${flags.length ? note(`<b>${flags.length} issue${flags.length > 1 ? 's' : ''} found</b><ul style="margin:6px 0 0;padding-left:18px">${flags.map(f => `<li>${f}</li>`).join('')}</ul>`, 'bad') : note('Everything is back, in the same condition it left.', 'ok')}
+          ${flags.length ? `<div class="field" style="margin-top:14px"><label class="f">Photos of damage</label><div class="photo" style="aspect-ratio:auto;height:90px;cursor:pointer" data-act="toast" data-msg="Opens the camera or file picker (mockup)">${ic('cam', 'style="width:28px"')}<span class="cap">Tap to add photos</span></div></div>
+          <div class="field"><label class="f">Notes</label><textarea class="in" rows="2" placeholder="What happened?"></textarea></div>` : ''}
+          <button class="btn primary" style="width:100%;justify-content:center;margin-top:14px" data-act="finish-return" data-id="${id}">${ic('check')}Complete return${flags.length ? ' and file reports' : ''}</button>
+          <p style="font-size:12px;color:var(--ink-3);margin:10px 0 0">Good items go back to available stock. Damaged ones move to damaged / for repair. Missing ones go to Admin for review.</p>
+        </div></div>
+        <div class="card"><div class="card-h"><h3>Clearance on file</h3></div><div class="card-b" style="font-size:13px">${o.clearance ? `Signed by <b>${esc(o.clearance.by)}</b><br><span style="color:var(--ink-3)">${o.clearance.at}</span><br><a href="#/clearance/${id}">View clearance →</a>` : 'None'}</div></div></div>
+      </div>`;
+  };
+
+  pages.damage = (id) => {
+    if (id) {
+      const d = D.damage.find(x => x.id === id); if (!d) return notFound();
+      const o = order(d.order) || { id: d.order, event: 'TechCon 2025 Expo', clearance: { at: 'Oct 17, 2026 · 8:10 AM', by: 'Mark Villanueva', role: 'Client representative', where: 'SMX Convention Center' } }, it = item(d.sku), c = cust(d.cust);
+      return head(`${d.id}: ${esc(it.name)}${d.unit ? ` <span class="mono" style="font-size:.8em">${d.unit}</span>` : ` × ${d.qty}`}`, `${condName(d.before)} → ${condName(d.after)} · reported ${d.date} by ${d.by}`,
+        S.role === 'admin' ? `<button class="btn" data-act="toast" data-msg="Marked as under repair (mockup)">${ic('wrench')}Send to repair</button><button class="btn" data-act="toast" data-msg="Written off (mockup)">Write off</button><button class="btn primary" data-act="toast" data-msg="Charge added to ${esc(c.name)}'s account (mockup)">Charge customer</button>` : '',
+        `<a href="#/damage">Damage &amp; loss</a> / ${d.id}`) + `
+        <div class="grid g-main">
+          <div class="stack">
+            <div class="card"><div class="card-h"><h3>Proof chain</h3><span class="sub">Every step is logged automatically</span></div><ul class="feed">
+              <li><span class="dot ok"></span><div><b>Released in good condition</b>, counted on the release checklist<small>${o.clearance.at} · ${o.id}</small></div></li>
+              <li><span class="dot ok"></span><div><b>Clearance signed by ${esc(o.clearance.by)}</b> (${esc(o.clearance.role)}) at ${esc(o.clearance.where)} · <a href="#/clearance/${o.id}">view</a><small>${o.clearance.at}</small></div></li>
+              <li><span class="dot bad"></span><div><b>Returned: ${condName(d.after).toLowerCase()}</b>. ${esc(d.note)}<small>${d.date} · checked by ${d.by}</small></div></li>
+            </ul></div>
+            <div class="grid g2"><div class="photo">${ic(catIcon[it.cat])}<span class="cap">Photo at return · ${d.date}</span></div><div class="photo">${ic(catIcon[it.cat])}<span class="cap">Close-up</span></div></div>
+          </div>
+          <div class="stack"><div class="card"><div class="card-h"><h3>Details</h3><span class="pill ${d.status.startsWith('Charged') ? 'ok' : d.status.startsWith('Awaiting') ? 'warn' : 'info'}">${d.status}</span></div><div class="card-b"><dl class="dl">
+            <dt>Item</dt><dd>${esc(it.name)}</dd><dt>SKU</dt><dd class="mono">${it.sku}</dd>${d.unit ? `<dt>Unit</dt><dd><a class="mono" href="#/item/${it.sku}/${d.unit}">${d.unit}</a></dd>` : `<dt>Quantity</dt><dd>${d.qty}</dd>`}
+            <dt>Order</dt><dd><a href="#/order/${o.id}">${o.id}</a> · ${esc(o.event)}</dd><dt>Customer</dt><dd>${esc(c.name)}<br><small style="color:var(--ink-3)">${esc(c.contact)} · ${c.phone}</small></dd>
+            <dt>Before</dt><dd>${condPill(d.before)}</dd><dt>After</dt><dd>${condPill(d.after)}</dd>${d.charge ? `<dt>Charge</dt><dd>${peso(d.charge)}</dd>` : ''}</dl></div></div></div>
+        </div>`;
+    }
+    const rows = D.damage.filter(d => S.role === 'admin' || myWh(order(d.order)?.wh || 'TGG'));
+    return head('Damage & loss', 'Every damaged or missing item, linked to the order, the customer and the signed clearance') + `
+      <div class="card"><table class="tbl"><tr><th>Report</th><th>Item</th><th>Order / customer</th><th>Condition</th><th>Status</th><th class="num">Charge</th></tr>
+      ${rows.map(d => { const it = item(d.sku), o = order(d.order);
+        return `<tr class="click" data-go="#/damage/${d.id}"><td><b>${d.id}</b><small>${d.date}</small></td><td>${esc(it.name)}<small class="mono">${d.unit || it.sku + ' × ' + d.qty}</small></td><td>${o ? esc(o.event) : d.order}<small>${d.order} · ${esc(cust(d.cust).name)}</small></td><td>${condPill(d.before)} → ${condPill(d.after)}</td><td>${d.status}</td><td class="num">${d.charge ? peso(d.charge) : '-'}</td></tr>`; }).join('')}
+      </table></div>`;
+  };
+
+  pages.adjustments = () => {
+    const admin = S.role === 'admin';
+    return head('Stock adjustments', admin ? 'Stock-ins, write-offs, transfers and condition updates. Staff write-offs and transfers need your approval.' : 'Record stock-ins and condition changes. Write-offs and transfers go to the Admin for approval.',
+      `<button class="btn primary" data-act="new-adj">${ic('plus')}New adjustment</button>`) + `
+      <div class="card"><table class="tbl"><tr><th>Adjustment</th><th>Type</th><th>Item</th><th class="num">Qty</th><th>Warehouse</th><th>By</th><th>Status</th>${admin ? '<th></th>' : ''}</tr>
+      ${D.adjustments.map(a => `<tr><td><b>${a.id}</b><small>${a.date}</small></td><td>${a.type}<small>${esc(a.note)}</small></td><td>${esc(item(a.sku).name)}<small class="mono">${a.sku}</small></td><td class="num">${a.qty}</td><td>${a.wh.replace('PSG', 'Pasig Main').replace('LPS', 'Las Piñas')}</td><td>${a.by}<small>${a.role}</small></td>
+        <td>${a.status === 'Pending approval' ? '<span class="pill warn">Pending approval</span>' : a.status === 'Rejected' ? '<span class="pill bad">Rejected</span>' : '<span class="pill ok">Done</span>'}</td>
+        ${admin ? `<td>${a.status === 'Pending approval' ? `<div style="display:flex;gap:6px"><button class="btn sm ok" data-act="approve" data-id="${a.id}">Approve</button><button class="btn sm danger" data-act="reject" data-id="${a.id}">Reject</button></div>` : ''}</td>` : ''}</tr>`).join('')}
+      </table></div>`;
+  };
+
+  pages.reports = () => {
+    const tab = S.repTab || 'inventory';
+    const t = (k, l) => `<button class="${tab === k ? 'on' : ''}" data-rtab="${k}">${l}</button>`;
+    const C = { good: '#2257e6', out: '#8fb0ff', rep: '#e59a1a', dmg: '#d9493b' };
+    let body = '';
+    if (tab === 'inventory') {
+      const per = D.warehouses.map(w => { const s = { good: 0, out: 0, rep: 0, dmg: 0 }; for (const it of D.items) { const x = stats(it, w.id); s.good += x.good; s.out += x.out; s.rep += x.rep; s.dmg += x.dmg; } return { w, s, t: s.good + s.out + s.rep + s.dmg }; });
+      const max = Math.max(...per.map(p => p.t));
+      const low = lowStock(null);
+      body = `<div class="grid g2">
+        <div class="card"><div class="card-h"><h3>Stock levels per warehouse</h3><button class="btn sm" data-act="toast" data-msg="Exported to Excel (mockup)">Export</button></div><div class="card-b">
+          <div class="legend"><span><i style="background:${C.good}"></i>Good</span><span><i style="background:${C.out}"></i>Out</span><span><i style="background:${C.rep}"></i>For repair</span><span><i style="background:${C.dmg}"></i>Damaged</span></div>
+          <div class="bars">${per.map(p => `<div class="bar"><span>${p.w.name}</span><div class="track" style="width:${p.t / max * 100}%">${['good', 'out', 'rep', 'dmg'].map(k => `<span style="width:${p.s[k] / p.t * 100}%;background:${C[k]}" title="${k}: ${p.s[k]}"></span>`).join('')}</div><span class="v">${n(p.t)}</span></div>`).join('')}</div>
+        </div></div>
+        <div class="card"><div class="card-h"><h3>Low stock alerts</h3><span class="pill warn">${low.length}</span></div><table class="tbl"><tr><th>Item</th><th>Warehouse</th><th class="num">Available</th><th class="num">Alert at</th></tr>
+          ${low.map(x => `<tr class="click" data-go="#/item/${x.it.sku}"><td>${esc(x.it.name)}</td><td>${x.w.name}</td><td class="num"><b>${x.s.avail}</b></td><td class="num">${x.it.low}</td></tr>`).join('')}</table></div>
+        <div class="card" style="grid-column:1/-1"><div class="card-h"><h3>Stock per item across all warehouses</h3></div><table class="tbl"><tr><th>Item</th>${D.warehouses.map(w => `<th class="num">${w.name}</th>`).join('')}<th class="num">Total</th></tr>
+          ${D.items.map(it => `<tr><td>${esc(it.name)}<small class="mono">${it.sku}</small></td>${D.warehouses.map(w => `<td class="num">${n(stats(it, w.id).total) || '-'}</td>`).join('')}<td class="num"><b>${n(stats(it).total)}</b></td></tr>`).join('')}</table></div>
+      </div>`;
+    } else if (tab === 'deliveries') {
+      const disc = D.orders.filter(o => o.discrepancy);
+      body = `<div class="grid g2">
+        <div class="card"><div class="card-h"><h3>Discrepancy report: sent vs. returned</h3></div><table class="tbl"><tr><th>Order</th><th>Item</th><th class="num">Sent</th><th class="num">Back</th><th>Issue</th></tr>
+          ${disc.flatMap(o => o.lines.filter(l => (l.back !== undefined && (l.back < l.qty || l.dmg)) || Object.values(l.unitBack || {}).some(x => x !== 'good')).map(l => `<tr class="click" data-go="#/order/${o.id}"><td>${o.id}<small>${esc(o.event)}</small></td><td>${esc(item(l.sku).name)}</td><td class="num">${lineQty(l)}</td><td class="num">${l.units ? l.units.length : l.back}</td><td>${l.units ? Object.entries(l.unitBack).filter(([, v]) => v !== 'good').map(([u, v]) => `<span class="mono">${u}</span> ${condName(v)}`).join(', ') : `${l.qty - l.back ? `${l.qty - l.back} missing` : ''}${l.dmg ? `, ${l.dmg} damaged` : ''}`}</td></tr>`)).join('')}</table></div>
+        <div class="card"><div class="card-h"><h3>Orders by type</h3></div><div class="card-b">
+          <div class="bars">${[['Delivery', D.orders.filter(o => o.type === 'delivery').length, C.good], ['Pickup', D.orders.filter(o => o.type === 'pickup').length, '#8b5cf6']].map(([l, v, c]) => `<div class="bar"><span>${l}</span><div class="track"><span style="width:${v / D.orders.length * 100}%;background:${c}"></span></div><span class="v">${v}</span></div>`).join('')}</div>
+          <p style="font-size:12.5px;color:var(--ink-3);margin:8px 0 0">This month, sample data</p></div></div>
+        <div class="card" style="grid-column:1/-1"><div class="card-h"><h3>Order history</h3><input class="in" style="width:220px" placeholder="Search by date, event, warehouse"></div><table class="tbl"><tr><th>Order</th><th>Type</th><th>Warehouse</th><th>Date</th><th>Status</th></tr>
+          ${D.orders.map(o => `<tr class="click" data-go="#/order/${o.id}"><td>${o.id}<small>${esc(o.event)}</small></td><td>${typeTag(o)}</td><td>${wh(o.wh).name}</td><td>${o.date}</td><td>${statusPill(o)}</td></tr>`).join('')}</table></div>
+      </div>`;
+    } else {
+      const util = [['Tiffany Chair (White)', 86], ['Tent 10×20 (White)', 74], ['Active Speaker 15"', 68], ['5ft Round Table', 61], ['Table Cloth (White, Round)', 55], ['Stage Platform 4×8', 22], ['Monoblock Chair (Black)', 18]];
+      const dmg = [['Tiffany Chair (White)', 6, 2], ['Tent 10×20 (White)', 2, 0], ['Active Speaker 15"', 1, 0], ['6ft Rectangular Table', 3, 0], ['Chair Sash (Gold)', 0, 5]];
+      body = `<div class="grid g2">
+        <div class="card"><div class="card-h"><h3>Item utilization</h3><span class="sub">% of days out at events, last 90 days</span></div><div class="card-b"><div class="bars">${util.map(([l, v]) => `<div class="bar"><span>${l}</span><div class="track"><span style="width:${v}%;background:${C.good}"></span></div><span class="v">${v}%</span></div>`).join('')}</div></div></div>
+        <div class="card"><div class="card-h"><h3>Damage and loss per item</h3><span class="sub">last 90 days</span></div><div class="card-b">
+          <div class="legend"><span><i style="background:${C.dmg}"></i>Damaged</span><span><i style="background:#7d8aa0"></i>Missing</span></div>
+          <div class="bars">${dmg.map(([l, d, m]) => `<div class="bar"><span>${l}</span><div class="track"><span style="width:${d * 10}%;background:${C.dmg}"></span><span style="width:${m * 10}%;background:#7d8aa0"></span></div><span class="v">${d + m}</span></div>`).join('')}</div></div></div>
+        <div class="card" style="grid-column:1/-1"><div class="card-h"><h3>Stock movement log (audit trail)</h3></div><table class="tbl"><tr><th>When</th><th>What</th><th>Item</th><th class="num">Qty</th><th>By</th></tr>
+          ${[['Nov 3, 2:14 PM', 'Delivered, clearance signed', 'ORD-1040 · 133 pcs', '', 'Carla Reyes (customer)'], ['Nov 3, 9:02 AM', 'Write-off requested', 'Tiffany Chair (White)', '2', 'Maria Santos'], ['Nov 2, 4:30 PM', 'Stock-in', 'Chair Sash (Gold)', '100', 'Maria Santos'], ['Nov 2, 10:05 AM', 'Released (pickup)', 'ORD-1038 · 14 pcs', '', 'Jomar Ramos'], ['Nov 1, 9:40 AM', 'Released (delivery)', 'ORD-1037 · 242 pcs', '', 'Maria Santos'], ['Oct 30, 3:15 PM', 'Condition: repair → good', '6ft Rectangular Table', '3', 'Juan Dela Cruz'], ['Oct 27, 5:10 PM', 'Returned with discrepancy', 'ORD-1036', '', 'Maria Santos']].map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td class="num">${r[3]}</td><td>${r[4]}</td></tr>`).join('')}</table></div>
+      </div>`;
+    }
+    return head('Reports', 'Inventory, deliveries and operations', `<button class="btn" data-act="toast" data-msg="Downloading PDF (mockup)">${ic('print')}Download PDF</button>`) + `<div class="tabs">${t('inventory', 'Inventory')}${t('deliveries', 'Deliveries & returns')}${t('ops', 'Operations')}</div>` + body;
+  };
+
+  pages.notifications = () => head('Notifications', 'In-app alerts for low stock, order status and return discrepancies') + `
+    <div class="card"><ul class="feed">${D.notifications.map(x => `<li><span class="dot ${x.tone === 'info' ? '' : x.tone}"></span><div style="flex:1"><a href="${x.link}">${esc(x.text)}</a><small>${x.when}</small></div></li>`).join('')}</ul></div>`;
+
+  pages.settings = () => {
+    const tab = S.setTab || 'users';
+    const t = (k, l) => `<button class="${tab === k ? 'on' : ''}" data-stab="${k}">${l}</button>`;
+    let body;
+    if (tab === 'users') body = `<div class="card"><div class="card-h"><h3>Users</h3><button class="btn sm primary" data-act="toast" data-msg="Invite user (mockup)">${ic('plus')}Add user</button></div><table class="tbl"><tr><th>Name</th><th>Role</th><th>Warehouses</th><th>Status</th></tr>
+      ${D.users.map(u => `<tr><td><div class="cell-item"><div class="avatar">${u.name.split(' ').map(x => x[0]).join('')}</div><div><b>${u.name}</b><small style="color:var(--ink-3)">${u.email}</small></div></div></td><td>${u.role}</td><td>${u.wh}</td><td>${u.active ? '<span class="pill ok">Active</span>' : '<span class="pill mute">Inactive</span>'}</td></tr>`).join('')}</table></div>`;
+    else if (tab === 'roles') {
+      const rows = [['View dashboard and inventory', 1, 1], ['Create orders, release checklist, clearance', 1, 1], ['Process returns and file damage reports', 1, 1], ['Stock-ins and condition updates', 1, 1], ['Write-offs and transfers', 1, 'approval'], ['Approve adjustments, charge customers', 1, 0], ['Warehouses, categories, reports', 1, 0], ['Users and settings', 1, 0]];
+      const cell = v => v === 1 ? `<span style="color:var(--ok)">${ic('check', 'style="width:18px"')}</span>` : v === 'approval' ? '<span class="pill warn nodot">Needs approval</span>' : '<span style="color:var(--ink-3)">-</span>';
+      body = `<div class="card"><table class="tbl"><tr><th>Permission</th><th>Admin</th><th>Staff</th></tr>${rows.map(r => `<tr><td>${r[0]}</td><td>${cell(r[1])}</td><td>${cell(r[2])}</td></tr>`).join('')}</table></div>`;
+    } else body = `<div class="card" style="max-width:640px"><div class="card-b">
+      <div class="field"><label class="f">Company name</label><input class="in" value="Sample Events Rental Co."></div>
+      <div class="field"><label class="f">Address</label><input class="in" value="Ortigas Ave. Ext., Pasig City"></div>
+      <div class="grid g2" style="gap:12px"><div class="field"><label class="f">Phone</label><input class="in" value="(02) 8555 0100"></div><div class="field"><label class="f">Email</label><input class="in" value="hello@example.com"></div></div>
+      <div class="field"><label class="f">Clearance text (printed on every clearance)</label><textarea class="in" rows="3">I confirm that I received the items listed above, complete and in the condition stated. Missing or damaged items may be charged.</textarea></div>
+      <button class="btn primary" data-act="toast" data-msg="Saved (mockup)">Save</button></div></div>`;
+    return head('Settings', 'Users, roles and company profile') + `<div class="tabs">${t('users', 'Users')}${t('roles', 'Roles & permissions')}${t('company', 'Company profile')}</div>` + body;
+  };
+
+  pages.labels = (params) => {
+    const sku = params.get('sku') || S.labelSku || 'TNT-1020';
+    S.labelSku = sku;
+    const it = item(sku), fmt = S.labelFmt || 'a4';
+    let codes = it.track === 'unit' ? it.units.map(u => u.code) : Array(21).fill(it.sku);
+    codes = codes.slice(0, 21);
+    const lab = code => `<div class="label"><div class="qr">${qrSvg('WIMS:' + code)}</div><div><b>${esc(it.name)}</b><span class="mono">${code}</span><small>Sample Events Rental Co.</small></div></div>`;
+    return `<div class="no-print">${head('QR labels', 'Print stickers for items and units. Phone cameras read QR codes quickly, even on small labels.', `<button class="btn primary" data-act="print">${ic('print')}Print</button>`)}
+      <div class="filters"><select class="in" data-label="sku">${D.items.map(x => `<option value="${x.sku}" ${x.sku === sku ? 'selected' : ''}>${esc(x.name)}${x.track === 'unit' ? ` (${x.units.length} units)` : ''}</option>`).join('')}</select>
+      <select class="in" data-label="fmt"><option value="a4" ${fmt === 'a4' ? 'selected' : ''}>A4 sticker paper, 21 per sheet (any printer)</option><option value="thermal" ${fmt === 'thermal' ? 'selected' : ''}>Thermal label printer, 50×30mm</option></select></div>
+      <div style="margin-bottom:16px">${note(it.track === 'unit' ? `Each unit gets its own code, so a scan opens that exact unit. For outdoor items like tents, use <b>waterproof vinyl</b> sticker paper.` : 'Count-tracked items share one code per SKU. Stick it on the item or on the shelf bin.')}</div></div>
+      ${fmt === 'a4' ? `<div class="sheet">${codes.map(lab).join('')}</div>` : `<div style="display:flex;flex-wrap:wrap;gap:14px;justify-content:center">${codes.slice(0, 8).map(c => `<div style="width:250px;height:150px;background:#fff;box-shadow:var(--shadow);border-radius:6px;padding:10px">${lab(c).replace('class="label"', 'class="label" style="border:0;height:100%"')}</div>`).join('')}</div>`}`;
+  };
+
+  pages.phone = () => {
+    const o = order('ORD-1038'), o2 = order('ORD-1041');
+    const pr = S.phoneRet || (S.phoneRet = {});
+    const pList = [...o.lines.flatMap(l => l.units ? l.units.map(u => ({ k: u, label: item(l.sku).name, code: u })) : [{ k: 'L' + l.sku, label: item(l.sku).name, code: `${l.sku} × ${l.qty}` }])];
+    const doneCount = pList.filter(x => pr[x.k]).length;
+    const signed = !!o2.clearance;
+    return head('On the phone', 'Staff open WIMS in the phone\'s browser. No app to install, works on Android and iPhone.') + `
+      <div class="phones">
+        <div class="phone-wrap"><div class="phone"><div class="screen">
+          <div class="p-status"><span>9:41</span><span>●●● 5G</span></div>
+          <div class="p-bar"><span class="url">🔒 wims.example.com/return/ORD-1038</span></div>
+          <div class="p-body"><h4>Return · ORD-1038</h4><div style="color:var(--ink-3);margin:-4px 0 10px">Lim 7th Birthday · Pickup</div>
+            <div class="cam" data-act="phone-scan"><div class="frame"></div><div class="laser"></div><div class="fake-qr" style="position:absolute">${qrSvg('WIMS:' + (pList.find(x => !pr[x.k])?.code || 'done'))}</div><div class="hit ${S.phoneHit ? 'show' : ''}">${S.phoneHit ? `✓ ${esc(S.phoneHit)}` : ''}</div></div>
+            <button class="btn primary p-btn" data-act="phone-scan">${ic('cam')}${doneCount === pList.length ? 'All scanned' : 'Tap to scan'}</button>
+            <div class="p-list">${pList.map(x => `<div class="r ${pr[x.k] ? 'done' : ''}"><span class="tick ${pr[x.k] ? 'on' : ''}">${ic('check')}</span><div style="flex:1"><b style="font-size:12px">${esc(x.label)}</b><div class="mono" style="font-size:10.5px;color:var(--ink-3)">${x.code}</div></div></div>`).join('')}</div>
+            <div style="font-size:11.5px;color:var(--ink-3);margin-top:8px;text-align:center">${doneCount} of ${pList.length} checked</div>
+          </div></div></div><p><b>Scan on return.</b> Point the camera at the QR label; the item is ticked off the list. Tap the camera to try it.</p></div>
+
+        <div class="phone-wrap"><div class="phone"><div class="screen">
+          <div class="p-status"><span>9:41</span><span>●●● 5G</span></div>
+          <div class="p-bar"><span class="url">🔒 wims.example.com/sign/ORD-1041</span></div>
+          <div class="p-body">${signed ? `<div style="text-align:center;padding-top:60px"><div style="width:70px;height:70px;border-radius:50%;background:var(--ok-bg);color:var(--ok);display:grid;place-items:center;margin:0 auto">${ic('check', 'style="width:36px"')}</div><h4 style="margin-top:14px">Signed and delivered</h4><p style="color:var(--ink-2)">Clearance saved on ORD-1041.<br>The office sees it right away.</p><a class="btn p-btn" href="#/clearance/ORD-1041">View clearance</a></div>` : `
+            <h4>Hand over · ORD-1041</h4><div style="color:var(--ink-3);margin:-4px 0 6px">TechCon 2026 · SMX Convention Center</div>
+            <div class="p-list">${signForm(o2, true).items}</div>
+            <p style="font-size:11.5px;line-height:1.5;margin:10px 2px">I confirm I received the items above, complete and in the condition stated.</p>
+            <input class="in" id="p-name" value="Mark Villanueva" style="font-size:12px">
+            <div class="sig-pad" style="height:110px;margin-top:8px"><canvas id="p-sig"></canvas><div class="hint" style="bottom:24px">Receiver signs here</div></div>
+            <button class="btn ok p-btn" id="p-sig-ok" data-act="phone-sign" disabled>${ic('check')}Confirm receipt</button>`}
+          </div></div></div><p><b>Sign at the venue.</b> The receiver checks the items and signs on the staff member's phone. The order moves to Delivered.</p></div>
+      </div>`;
+  };
+
+  const notFound = () => head('Not found', 'This page does not exist in the mockup.') + '<a class="btn" href="#/dashboard">Go to dashboard</a>';
+  const ADMIN_ONLY = ['warehouses', 'categories', 'reports', 'settings'];
+
+  // ---------- router ----------
+  function render() {
+    const raw = location.hash || '#/dashboard';
+    const [path, qs] = raw.slice(2).split('?');
+    const params = new URLSearchParams(qs || '');
+    const parts = path.split('/');
+    let key = parts[0] || 'dashboard', html;
+    if (key === 'orders' && parts[1] === 'new') key = 'orders/new';
+    if (S.role === 'staff' && ADMIN_ONLY.includes(key)) html = head('Admin only', 'Staff accounts cannot open this page. Switch to Admin at the top to see it.');
+    else if (key === 'item') html = pages.item(parts[1], parts[2]);
+    else if (['order', 'release', 'sign', 'clearance', 'return'].includes(key)) html = pages[key](parts[1]);
+    else if (key === 'damage') html = pages.damage(parts[1]);
+    else if (key === 'labels') html = pages.labels(params);
+    else html = (pages[key] || notFound)();
+    const navKey = { item: 'inventory', order: 'orders', 'orders/new': 'orders', release: 'orders', sign: 'orders', clearance: 'orders', return: 'orders', notifications: '' }[key] ?? key;
+    app.innerHTML = shell(navKey, raw, html, key);
+    mount(key);
+  }
+
+  function mount(key) {
+    if (key === 'sign') setupSig(document.getElementById('sig'), document.getElementById('sig-ok'));
+    if (key === 'phone') setupSig(document.getElementById('p-sig'), document.getElementById('p-sig-ok'));
+  }
+  // Deferred so a re-render never runs inside the blur/change of an input it is replacing.
+  let pending = null;
+  const keepScroll = fn => { fn(); if (pending) return; const y = window.scrollY; pending = setTimeout(() => { pending = null; render(); window.scrollTo(0, y); }, 0); };
+
+  function setupSig(canvas, okBtn) {
+    if (!canvas) return;
+    const dpr = window.devicePixelRatio || 1, rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * dpr; canvas.height = rect.height * dpr;
+    const ctx = canvas.getContext('2d'); ctx.scale(dpr, dpr);
+    ctx.lineWidth = 2.3; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#1b2a55';
+    let drawing = false, ink = 0;
+    const pos = e => { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+    canvas.addEventListener('pointerdown', e => { drawing = true; canvas.setPointerCapture(e.pointerId); const [x, y] = pos(e); ctx.beginPath(); ctx.moveTo(x, y); });
+    canvas.addEventListener('pointermove', e => { if (!drawing) return; const [x, y] = pos(e); ctx.lineTo(x, y); ctx.stroke(); ink++; if (ink > 12 && okBtn) okBtn.disabled = false; });
+    canvas.addEventListener('pointerup', () => { drawing = false; });
+    canvas._clear = () => { ctx.clearRect(0, 0, canvas.width, canvas.height); ink = 0; if (okBtn) okBtn.disabled = true; };
+  }
+
+  // ---------- events ----------
+  document.addEventListener('click', e => {
+    const go = e.target.closest('[data-go]');
+    if (go && !e.target.closest('a,button,select,input')) { location.hash = go.dataset.go; return; }
+    const role = e.target.closest('[data-role]');
+    if (role) { S.role = role.dataset.role; S.newOrder = null; S.invFilter = null; render(); toast(S.role === 'admin' ? 'Viewing as Admin (Juan Dela Cruz)' : 'Viewing as Staff (Maria Santos)'); return; }
+    const tab = e.target.closest('[data-tab]'); if (tab) { S.orderTab = tab.dataset.tab; render(); return; }
+    const rt = e.target.closest('[data-rtab]'); if (rt) { S.repTab = rt.dataset.rtab; render(); return; }
+    const st = e.target.closest('[data-stab]'); if (st) { S.setTab = st.dataset.stab; render(); return; }
+    const tk = e.target.closest('[data-tick]');
+    if (tk) { const id = location.hash.split('/')[2]; const r = S.release[id]; r.ticks[tk.dataset.tick] = !r.ticks[tk.dataset.tick]; keepScroll(() => {}); return; }
+    const a = e.target.closest('[data-act]'); if (!a) return;
+    const act = a.dataset.act, id = a.dataset.id;
+    if (act === 'hide-guide') { S.guide = false; render(); }
+    else if (act === 'toast') toast(a.dataset.msg);
+    else if (act === 'print') window.print();
+    else if (act === 'clear-q') { S.q = ''; render(); }
+    else if (act === 'add-item') toast('Add item form: name, SKU, category, tracking (by count / per unit), image (mockup)');
+    else if (act === 'status') { const o = order(location.hash.split('/')[2]); o.status = a.dataset.to; render(); toast(`${o.id} is now ${o.status}`); }
+    else if (act === 'scan') {
+      const o = order(id), r = S.release[id]; const keys = []; o.lines.forEach((l, i) => l.units ? l.units.forEach(u => keys.push(u)) : keys.push('L' + i));
+      const k = keys.find(x => !r.ticks[x]); if (!k) { toast('Everything is already checked'); return; }
+      r.ticks[k] = true; keepScroll(() => {}); const row = document.getElementById('row-' + k); if (row) { row.classList.add('flash'); row.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+      toast(`Scanned ${k.startsWith('L') ? item(o.lines[+k.slice(1)].sku).sku : k}: matched on ${o.id}`);
+    }
+    else if (act === 'dispatch') { const o = order(id); o.status = 'In Transit'; o.releasedBy = me().name; o.lines.forEach(l => {}); location.hash = '#/order/' + id; toast(`${o.id} dispatched. The receiver signs at the venue.`); }
+    else if (act === 'sig-clear') document.getElementById('sig')._clear();
+    else if (act === 'sign') {
+      const o = order(id); const name = document.getElementById('sig-name').value.trim() || cust(o.cust).contact;
+      S.sigs[id] = document.getElementById('sig').toDataURL();
+      o.clearance = { by: name, role: document.getElementById('sig-role').value, at: now(), where: o.type === 'pickup' ? wh(o.wh).name + ' warehouse' : o.venue };
+      o.releasedBy = o.releasedBy || me().name;
+      o.status = o.type === 'pickup' ? 'Picked Up' : 'Delivered';
+      D.notifications.unshift({ tone: 'ok', text: `${o.id} ${o.status.toLowerCase()}, clearance signed by ${name}`, when: 'Just now', link: '#/order/' + id });
+      location.hash = '#/clearance/' + id; toast('Clearance signed and saved on the order');
+    }
+    else if (act === 'scan-ret') {
+      const o = order(id), r = S.ret[id]; const u = o.lines.flatMap(l => l.units || []).find(x => !r.scanned[x]);
+      if (!u) { toast('All units scanned'); return; } r.scanned[u] = true; keepScroll(() => {}); toast(`Scanned ${u}: belongs to ${o.id}`);
+    }
+    else if (act === 'finish-return') finishReturn(id);
+    else if (act === 'add-line') { S.newOrder.lines.push({ sku: 'TBL-5FT-RND', qty: 10 }); keepScroll(() => {}); }
+    else if (act === 'rm-line') { S.newOrder.lines.splice(+a.dataset.i, 1); keepScroll(() => {}); }
+    else if (act === 'save-order') saveOrder();
+    else if (act === 'approve' || act === 'reject') { const x = D.adjustments.find(y => y.id === id); x.status = act === 'approve' ? 'Done' : 'Rejected'; render(); toast(`${x.id} ${act === 'approve' ? 'approved' : 'rejected'}`); }
+    else if (act === 'new-adj') newAdj();
+    else if (act === 'phone-scan') {
+      const o = order('ORD-1038'), pr = S.phoneRet;
+      const list = o.lines.flatMap(l => l.units ? l.units.map(u => [u, `${u} · ${item(l.sku).name}`]) : [['L' + l.sku, `${l.sku} × ${l.qty} · ${item(l.sku).name}`]]);
+      const nx = list.find(([k]) => !pr[k]); if (!nx) { toast('All items checked'); return; }
+      pr[nx[0]] = true; S.phoneHit = nx[1] + ' matched'; keepScroll(() => {});
+      setTimeout(() => { S.phoneHit = null; const h = document.querySelector('.cam .hit'); if (h) h.classList.remove('show'); }, 1600);
+    }
+    else if (act === 'phone-sign') {
+      const o = order('ORD-1041'); const name = document.getElementById('p-name').value || 'Mark Villanueva';
+      S.sigs['ORD-1041'] = document.getElementById('p-sig').toDataURL();
+      o.clearance = { by: name, role: 'Client representative', at: now(), where: o.venue }; o.status = 'Delivered'; o.releasedBy = 'Jomar Ramos';
+      keepScroll(() => {}); toast('ORD-1041 delivered and signed');
+    }
+  });
+
+  document.addEventListener('change', e => {
+    const t = e.target;
+    if (t.dataset.filter) { S.invFilter[t.dataset.filter] = t.value; render(); }
+    else if (t.dataset.cond) { const id = location.hash.split('/')[2]; S.release[id].cond[t.dataset.cond] = t.value; }
+    else if (t.dataset.ret) { const id = location.hash.split('/')[2]; S.ret[id][t.dataset.ret][t.dataset.k] = Math.max(0, parseInt(t.value || '0', 10)); keepScroll(() => {}); }
+    else if (t.dataset.unit) { const id = location.hash.split('/')[2]; S.ret[id].unit[t.dataset.unit] = t.value; keepScroll(() => {}); }
+    else if (t.dataset.label) { if (t.dataset.label === 'sku') { S.labelSku = t.value; location.hash = '#/labels?sku=' + t.value; } else { S.labelFmt = t.value; render(); } }
+    else if (S.newOrder && location.hash === '#/orders/new' && (t.dataset.k || t.dataset.line)) {
+      if (t.dataset.line !== undefined) { const l = S.newOrder.lines[+t.dataset.line]; if (t.dataset.k === 'qty') l.qty = Math.max(1, parseInt(t.value || '1', 10)); else l.sku = t.value; }
+      else if (t.dataset.k === 'type') S.newOrder.type = t.value;
+      else if (t.dataset.k === 'wh') S.newOrder.wh = t.value;
+      keepScroll(() => {});
+    }
+  });
+  document.addEventListener('keydown', e => {
+    if (e.target.id === 'q' && e.key === 'Enter') { S.q = e.target.value.trim(); const u = allUnits().find(x => x.code.toLowerCase() === S.q.toLowerCase()); const o = order(S.q.toUpperCase());
+      if (o) { S.q = ''; location.hash = '#/order/' + o.id; } else if (u) { const it = D.items.find(i => (i.units || []).includes(u)); S.q = ''; location.hash = `#/item/${it.sku}/${u.code}`; } else if (location.hash === '#/inventory') render(); else location.hash = '#/inventory'; }
+  });
+
+  function saveOrder() {
+    const f = S.newOrder; const id = 'ORD-' + S.nextOrder++;
+    const lines = f.lines.map(l => { const it = item(l.sku);
+      if (it.track === 'unit') { const free = it.units.filter(u => u.wh === f.wh && u.cond === 'good' && !unitOrder(u.code) && !unitReserved(u.code)); return { sku: l.sku, units: free.slice(0, l.qty).map(u => u.code) }; }
+      return { sku: l.sku, qty: l.qty }; });
+    D.orders.unshift({ id, type: f.type, event: document.getElementById('no-event').value, venue: f.type === 'delivery' ? (document.getElementById('no-venue')?.value || '') : `Customer pickup at ${wh(f.wh).name}`, wh: f.wh,
+      cust: 'new', date: 'Nov 14, 2026', returnDate: 'Nov 15, 2026', status: 'Preparing', lines });
+    D.customers.new = { name: document.getElementById('no-cust').value, contact: 'Rosa Mendoza', phone: '0917 555 0166' };
+    S.newOrder = null; location.hash = '#/order/' + id; toast(`${id} saved. Stock is reserved.`);
+  }
+
+  function finishReturn(id) {
+    const o = order(id), r = S.ret[id]; let issues = 0;
+    o.lines.forEach((l, i) => {
+      const it = item(l.sku);
+      if (l.units) {
+        l.unitBack = {};
+        l.units.forEach(u => { const c = r.unit[u] || 'good'; l.unitBack[u] = c; if (c !== 'missing') unit(u).cond = c;
+          if (c !== 'good') { issues++; D.damage.unshift({ id: 'DMG-00' + S.nextDmg++, sku: l.sku, unit: u, order: id, cust: o.cust, before: 'good', after: c, note: 'Filed from return.', date: 'Nov 4, 2026', by: me().name, status: c === 'missing' ? 'Awaiting Admin review' : 'Open', charge: 0 }); } });
+      } else {
+        const k = 'L' + i, back = r.back[k] ?? l.qty, dmg = r.dmg[k] ?? 0, rep = r.rep[k] ?? 0, miss = Math.max(0, l.qty - back);
+        Object.assign(l, { back, dmg, rep });
+        const s = it.stock[o.wh]; s[0] += Math.max(0, back - dmg - rep); s[1] += dmg; s[2] += rep;
+        const file = (q, after) => { issues++; D.damage.unshift({ id: 'DMG-00' + S.nextDmg++, sku: l.sku, unit: null, qty: q, order: id, cust: o.cust, before: 'good', after, note: 'Filed from return.', date: 'Nov 4, 2026', by: me().name, status: after === 'missing' ? 'Awaiting Admin review' : 'Open', charge: 0 }); };
+        if (dmg) file(dmg, 'damaged'); if (rep) file(rep, 'repair'); if (miss) file(miss, 'missing');
+      }
+    });
+    o.status = 'Returned'; o.discrepancy = issues > 0;
+    D.notifications.unshift({ tone: issues ? 'bad' : 'ok', text: `${o.id} returned${issues ? ` with ${issues} issue${issues > 1 ? 's' : ''}` : ', complete'}`, when: 'Just now', link: '#/order/' + id });
+    location.hash = '#/order/' + id; toast(issues ? `Return complete. ${issues} report${issues > 1 ? 's' : ''} filed.` : 'Return complete. Everything is back in stock.');
+  }
+
+  function newAdj() {
+    const staff = S.role === 'staff';
+    modal('New stock adjustment', `
+      <div class="field"><label class="f">Type</label><select class="in" id="adj-type"><option>Stock-in</option><option>Condition update</option><option>Write-off</option><option>Transfer</option></select></div>
+      <div class="field"><label class="f">Item</label><select class="in" id="adj-sku">${D.items.map(i => `<option value="${i.sku}">${esc(i.name)} (${i.sku})</option>`).join('')}</select></div>
+      <div class="grid g2" style="gap:12px"><div class="field"><label class="f">Quantity</label><input class="in" id="adj-qty" type="number" value="10"></div>
+      <div class="field"><label class="f">Warehouse</label><select class="in" id="adj-wh">${D.warehouses.filter(w => myWh(w.id)).map(w => `<option value="${w.id}">${w.name}</option>`).join('')}</select></div></div>
+      <div class="field"><label class="f">Note</label><input class="in" id="adj-note" placeholder="Reason, PO number, etc."></div>
+      <div id="adj-hint">${staff ? note('Write-offs and transfers you create go to the Admin for approval.') : ''}</div>`,
+      `<button class="btn" data-close>Cancel</button><button class="btn primary" id="adj-save">Save</button>`, (m, close) => {
+        m.querySelector('#adj-save').onclick = () => {
+          const type = m.querySelector('#adj-type').value;
+          const needs = staff && (type === 'Write-off' || type === 'Transfer');
+          D.adjustments.unshift({ id: 'ADJ-0' + S.nextAdj++, type, sku: m.querySelector('#adj-sku').value, qty: +m.querySelector('#adj-qty').value, wh: m.querySelector('#adj-wh').value, by: me().name, role: me().role, note: m.querySelector('#adj-note').value || '-', status: needs ? 'Pending approval' : 'Done', date: 'Nov 4, 2026' });
+          close(); render(); toast(needs ? 'Sent to Admin for approval' : 'Adjustment saved and logged');
+        };
+      });
+  }
+
+  window.addEventListener('hashchange', () => { render(); window.scrollTo(0, 0); });
+  render();
+})();

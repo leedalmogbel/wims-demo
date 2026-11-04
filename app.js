@@ -10,6 +10,7 @@
   const S = {
     role: 'admin',
     guide: false,
+    deliveryOn: false,
     story: null,
     setupDone: false,
     company: 'Sample Events Rental Co.',
@@ -30,6 +31,15 @@
     staff: { name: 'Maria Santos', role: 'Staff', whs: ['PSG', 'LPS'], scope: 'Staff · Pasig Main, Las Piñas' },
   };
   const me = () => ME[S.role];
+
+  function setDelivery(on) {
+    S.deliveryOn = on;
+    const all = [...D.orders, ...(D.hiddenOrders || [])];
+    D.orders = on ? all : all.filter(o => o.type !== 'delivery');
+    D.hiddenOrders = on ? [] : all.filter(o => o.type === 'delivery');
+    S.newOrder = null; S.orderTab = 'all';
+  }
+  const notifications = () => D.notifications.filter(x => S.deliveryOn || !x.deliveryOnly);
 
   // ---------- helpers ----------
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -232,7 +242,7 @@
       summary: 'Staff count every line and submit it.', task: () => `${story()?.sentBack ? `${esc(story().sentBack.by)} sent this back. ` : ''}<b>Tick every line</b> or tap <b>Scan next item</b>, then click <b>Submit for supervisor approval</b>.`,
       doneText: 'The checklist went to the supervisor.' },
     { key: 'approve', label: 'Approve', role: 'supervisor', route: () => `#/approve/${S.story}?as=supervisor`, review: () => `#/order/${S.story}?as=supervisor`, done: () => !!story()?.approval,
-      summary: 'The supervisor approves it or sends it back.', task: () => 'Review what Maria counted, then click <b>Approve</b>. You can also try <b>Send back</b> with a reason.',
+      summary: 'The supervisor approves it or sends it back.', task: () => 'Review what Maria counted, then click <b>Approve</b>, or try <b>Send back</b> with a reason. Supervisor approval is an optional add-on.',
       doneText: 'The supervisor approved it.' },
     { key: 'handover', label: 'Hand over', role: 'staff', route: () => `#/sign/${S.story}?as=staff`, review: () => `#/clearance/${S.story}?as=staff`, done: () => !!story()?.clearance,
       summary: 'The customer signs for exactly what they received.', task: () => 'The customer is at the counter. <b>Draw a signature</b>, then click <b>Confirm and sign</b>.',
@@ -269,7 +279,7 @@
     const approver = S.role !== 'staff';
     const pendingAll = D.orders.filter(o => o.status === 'For Approval' && canApprove(o)).length + (approver ? pendingAdj : 0);
     const navItem = (href, k, icon, label, extra = '') => `<a href="${href}" class="${key === k ? 'on' : ''}">${ic(icon)}${label}${extra}</a>`;
-    const unread = D.notifications.length;
+    const unread = notifications().length;
     return `<div class="shell ${S.navOpen ? 'nav-open' : ''}">
       <div class="nav-backdrop" data-act="toggle-nav"></div>
       <aside class="side no-print">
@@ -290,7 +300,7 @@
           ${navItem('#/phone', 'phone', 'phone', 'On the phone')}
           ${admin ? `<div class="nav-group">Admin</div>${navItem('#/reports', 'reports', 'chart', 'Reports')}${navItem('#/settings', 'settings', 'gear', 'Settings')}` : ''}
         </nav>
-        <div class="side-foot">${S.guide ? '' : '<a class="btn sm" href="#/welcome" style="margin-bottom:10px">Open the guide</a><br>'}Mockup · sample data only<br>Package 1 (web app)<br><button class="link-btn" data-act="restart">Reset demo</button></div>
+        <div class="side-foot">${S.guide ? '' : '<a class="btn sm" href="#/welcome" style="margin-bottom:10px">Open the guide</a><br>'}Mockup · sample data only<br>Package A · web, pickup only${S.deliveryOn ? ' + delivery' : ''}<br><button class="link-btn" data-act="restart">Reset demo</button></div>
       </aside>
       <div class="main">
         <header class="topbar no-print">
@@ -324,10 +334,10 @@
     const scope = S.role === 'admin' ? 'All 4 warehouses' : 'Pasig Main and Las Piñas (your assigned warehouses)';
     const waiting = orders.filter(o => o.status === 'For Approval' && canApprove(o));
     return head(greet, `${scope} · Wednesday, Nov 4, 2026`, `<a class="btn" href="#/phone">${ic('cam')}Scan</a><a class="btn primary" href="#/orders/new">${ic('plus')}New order</a>`) + `
-      ${(!S.guide || !curStep()) && !S.exploreHidden ? `<div class="card explore no-print"><div class="card-h"><div><h3>Things to try</h3><span class="sub">${exploreSeen()} of ${EXPLORE.length} seen. Everything here is sample data, so go ahead and change it.</span></div><button class="btn sm" data-act="hide-explore">Dismiss</button></div><div class="explore-grid">${EXPLORE.map(e => `<a href="${e[0]}" class="${S.seen[pathOf(e[0])] ? 'seen' : ''}"><span class="tick-sm">${S.seen[pathOf(e[0])] ? ic('check') : ''}</span><span><b>${e[1]}</b><small>${e[2]}</small></span></a>`).join('')}</div></div>` : ''}
+      ${(!S.guide || !curStep()) && !S.exploreHidden ? `<div class="card explore no-print"><div class="card-h"><div><h3>Things to try</h3><span class="sub">${exploreSeen()} of ${EXPLORE.length} seen. Everything here is sample data, so go ahead and change it.</span></div><button class="btn sm" data-act="hide-explore">Dismiss</button></div><div class="explore-grid">${EXPLORE.map(e => `<a href="${e[0]}" class="${S.seen[seenKey(e[0])] ? 'seen' : ''}"><span class="tick-sm">${S.seen[seenKey(e[0])] ? ic('check') : ''}</span><span><b>${e[1]}</b><small>${e[2]}</small></span></a>`).join('')}</div></div>` : ''}
       <div class="grid g4">
         ${kpi('Total stock', n(total), 'pieces across all conditions', 'box')}
-        ${kpi('Active orders', active.length, `${deliveries} deliveries · ${active.length - deliveries} pickups`, 'clip')}
+        ${kpi('Active orders', active.length, S.deliveryOn ? `${deliveries} deliveries · ${active.length - deliveries} pickups` : `${active.length} customer pickups`, 'clip')}
         ${kpi('Out at events', n(out), 'released and not yet returned', 'truck', 'ok')}
         ${kpi('Needs repair', repair, 'damaged or for repair', 'wrench', 'bad')}
       </div>
@@ -347,7 +357,7 @@
             ${S.role !== 'staff' ? pending.map(a => `<li><span class="dot"></span><div><a href="#/adjustments">${a.type} waiting for approval</a><small>${a.qty} × ${esc(item(a.sku).name)} · by ${a.by}</small></div></li>`).join('') : ''}
           </ul></div>
           <div class="card"><div class="card-h"><h3>Recent activity</h3></div><ul class="feed">
-            <li><span class="dot ok"></span><div>ORD-1040 delivered, clearance signed by Carla Reyes<small>Yesterday 2:14 PM · Alabang Country Club</small></div></li>
+            <li><span class="dot ok"></span><div>ORD-1038 picked up, clearance signed by Grace Lim<small>Nov 2, 10:05 AM · Taguig warehouse</small></div></li>
             <li><span class="dot"></span><div>100 Chair Sash (Gold) stocked in at Pasig Main<small>Nov 2 · Maria Santos</small></div></li>
             <li><span class="dot bad"></span><div>TNT-1020-007 returned torn, marked for repair<small>Oct 27 · ORD-1036 Aquino Wedding</small></div></li>
             <li><span class="dot"></span><div>3 tables repaired, moved back to good<small>Oct 30 · Juan Dela Cruz</small></div></li>
@@ -405,7 +415,7 @@
           <ul class="feed">${hist.map(h => `<li><span class="dot ${h.tone || ''}"></span><div>${esc(h.text)}<small>${h.date}</small></div></li>`).join('')}</ul></div>
       </div>`;
     }
-    return head(esc(it.name), `<span class="mono">${it.sku}</span> · ${cat(it.cat).name} · ${it.track === 'unit' ? 'Tracked per unit' : 'Tracked by count'} · low-stock alert below ${it.low}`,
+    return head(esc(it.name), `<span class="mono">${it.sku}</span> · ${cat(it.cat).name} · ${it.track === 'unit' ? 'Tracked per unit (optional add-on)' : 'Tracked by count'} · low-stock alert below ${it.low}`,
       `<a class="btn" href="#/labels?sku=${it.sku}">${ic('print')}Print labels</a>${S.role === 'admin' ? `<button class="btn" data-act="toast" data-msg="Editing items: available in the full system">Edit</button>` : ''}`,
       `<a href="#/inventory">Inventory</a> / ${it.sku}`) + `
       <div class="grid g4">
@@ -445,8 +455,8 @@
     const tab = S.orderTab || 'all';
     const os = visibleOrders().filter(o => tab === 'all' || (tab === 'delivery' && o.type === 'delivery') || (tab === 'pickup' && o.type === 'pickup') || (tab === 'out' && OUT.includes(o.status)) || (tab === 'returned' && o.status === 'Returned'));
     const t = (k, l) => `<button class="${tab === k ? 'on' : ''}" data-tab="${k}">${l}</button>`;
-    return head('Orders', 'Deliveries to events and customer pickups', `<a class="btn primary" href="#/orders/new">${ic('plus')}New order</a>`) + `
-      <div class="tabs">${t('all', 'All')}${t('delivery', 'Delivery')}${t('pickup', 'Pickup')}${t('out', 'Out now')}${t('returned', 'Returned')}</div>
+    return head('Orders', S.deliveryOn ? 'Deliveries to events and customer pickups' : 'Customer pickups and returns', `<a class="btn primary" href="#/orders/new">${ic('plus')}New order</a>`) + `
+      <div class="tabs">${t('all', 'All')}${S.deliveryOn ? t('delivery', 'Delivery') + t('pickup', 'Pickup') : ''}${t('out', 'Out now')}${t('returned', 'Returned')}</div>
       <div class="card"><table class="tbl"><tr><th>Order</th><th>Type</th><th>Customer</th><th>Warehouse</th><th>Event date</th><th class="num">Pieces</th><th>Status</th></tr>
       ${os.map(o => `<tr class="click" data-go="#/order/${o.id}"><td><b>${esc(o.event)}</b><small>${o.id} · ${esc(o.venue)}</small></td><td>${typeTag(o)}</td><td>${esc(cust(o.cust).name)}</td><td>${wh(o.wh).name}</td><td>${o.date}<small>Return ${o.returnDate}</small></td><td class="num">${n(o.lines.reduce((a, l) => a + lineQty(l), 0))}</td><td>${statusPill(o)}</td></tr>`).join('') || '<tr><td colspan="7" class="empty">No orders here.</td></tr>'}
       </table></div>`;
@@ -456,7 +466,7 @@
     const guided = S.guide && curStep()?.key === 'book';
     return guided
       ? { type: 'pickup', wh: 'PSG', cust: 'Mendoza Family', contact: 'Rosa Mendoza', event: 'Mendoza 50th Anniversary', venue: '', date: '2026-11-08', ret: '2026-11-09', lines: [{ sku: 'CHR-TIF-WHT', qty: 450 }, { sku: 'TNT-1020', qty: 1 }] }
-      : { type: 'delivery', wh: me().whs ? me().whs[0] : 'PSG', cust: 'Mendoza Family', contact: 'Rosa Mendoza', event: 'Mendoza 50th Anniversary', venue: 'Fernwood Gardens, Quezon City', date: '2026-11-14', ret: '2026-11-15', lines: [{ sku: 'CHR-TIF-WHT', qty: 100 }, { sku: 'TNT-1020', qty: 1 }] };
+      : { type: S.deliveryOn ? 'delivery' : 'pickup', wh: me().whs ? me().whs[0] : 'PSG', cust: 'Mendoza Family', contact: 'Rosa Mendoza', event: 'Mendoza 50th Anniversary', venue: 'Fernwood Gardens, Quezon City', date: '2026-11-14', ret: '2026-11-15', lines: [{ sku: 'CHR-TIF-WHT', qty: 100 }, { sku: 'TNT-1020', qty: 1 }] };
   };
   pages['orders/new'] = () => {
     const f = S.newOrder || (S.newOrder = newOrderDraft());
@@ -475,11 +485,11 @@
     return head('New order', 'Stock is checked for the exact dates, so the same chairs can\'t be booked twice', '', '<a href="#/orders">Orders</a> / New') + `
       <div class="grid g-main">
         <div class="card"><div class="card-b">
-          <div class="field"><label class="f">How does the customer get the items?</label>
+          ${S.deliveryOn ? `          <div class="field"><label class="f">How does the customer get the items?</label>
             <div class="choice">
               <label class="${f.type === 'delivery' ? 'on' : ''}"><input type="radio" name="t" value="delivery" ${f.type === 'delivery' ? 'checked' : ''} data-k="type"><div><b>${ic('truck', 'style="width:15px;vertical-align:-2px"')} Delivery</b><small>We bring the items to the event venue. Receiver signs on site.</small></div></label>
               <label class="${f.type === 'pickup' ? 'on' : ''}"><input type="radio" name="t" value="pickup" ${f.type === 'pickup' ? 'checked' : ''} data-k="type"><div><b>${ic('hand', 'style="width:15px;vertical-align:-2px"')} Pickup</b><small>Customer collects at the warehouse. Signs at the counter.</small></div></label>
-            </div></div>
+            </div></div>` : ''}
           <div class="grid g2" style="gap:12px">
             ${field('Customer', 'cust', f.cust)}${field('Event name', 'event', f.event)}
             ${f.type === 'delivery' ? field('Venue address', 'venue', f.venue) : ''}
@@ -534,13 +544,14 @@
   pages.welcome = () => `<main class="welcome"><div class="welcome-card">
       <div class="brand"><div class="brand-mark">WI</div><div><b>WIMS</b><small>Warehouse Inventory Management System</small></div></div>
       <h1>See one order go from booking to return</h1>
-      <p class="lead">You'll set up a sample rental business, then play each person on the team. It takes a few minutes, and everything here is sample data.</p>
-      <ol class="w-steps">${STEPS.map(x => `<li><span class="n">${STEPS.indexOf(x) + 1}</span><div><b>${x.label}</b><span class="who-sm">${ME[x.role].role}</span><small>${x.summary}</small></div></li>`).join('')}</ol>
+      <p class="lead">This is Package A: customers collect items at the warehouse and bring them back. You'll set up a sample rental business, then play each person on the team. It takes a few minutes, and everything here is sample data.</p>
+      <ol class="w-steps">${STEPS.map(x => `<li><span class="n">${STEPS.indexOf(x) + 1}</span><div><b>${x.label}</b><span class="who-sm">${ME[x.role].role}${x.key === 'approve' ? ' · optional add-on' : ''}</span><small>${x.summary}</small></div></li>`).join('')}</ol>
       <div class="w-actions"><button class="btn primary" data-act="start-guide">${S.setupDone ? 'Continue the guide' : 'Start the guide'} ${ic('arrow')}</button><button class="btn" data-act="skip-guide">Explore on my own</button></div>
     </div></main>`;
 
-  const EXPLORE = [['#/inventory?as=admin', 'Add your own item', 'Inventory → Add item, then book it on an order'], ['#/orders/new', 'Try to double-book', 'Book the same chairs on a busy date'], ['#/calendar', 'Availability calendar', 'What is free each day, per warehouse'], ['#/item/TNT-1020/TNT-1020-007', 'Per-unit history', 'Every event and damage report for one tent'], ['#/labels', 'QR labels', 'Print stickers; the codes really scan'], ['#/phone', 'On the phone', 'Scanning, and signing at a venue'], ['#/approvals?as=supervisor', 'Approvals', 'What the supervisor sees'], ['#/reports?as=admin', 'Reports', 'Stock, discrepancies, damage per item'], ['#/settings?as=admin', 'Roles and permissions', 'What each role can do']];
-  const exploreSeen = () => EXPLORE.filter(e => S.seen[pathOf(e[0])]).length;
+  const EXPLORE = [['#/inventory?as=admin', 'Add your own item', 'Inventory → Add item, then book it on an order'], ['#/orders/new', 'Try to double-book', 'Book the same chairs on a busy date'], ['#/calendar', 'Availability calendar', 'What is free each day, per warehouse'], ['#/item/TNT-1020/TNT-1020-007', 'Per-unit history', 'Every event and damage report for one tent'], ['#/labels', 'QR labels', 'Print stickers; the codes really scan'], ['#/phone', 'On the phone', 'Scanning, and signing for items'], ['#/approvals?as=supervisor', 'Approvals', 'What the supervisor sees'], ['#/reports?as=admin', 'Reports', 'Stock, discrepancies, damage per item'], ['#/settings?as=admin&tab=package', 'See the delivery add-on', 'Package A is pickup only; switch delivery on'], ['#/settings?as=admin&tab=roles', 'Roles and permissions', 'What each role can do']];
+  const seenKey = h => h.replace(/[?&]as=\w+/, '');
+  const exploreSeen = () => EXPLORE.filter(e => S.seen[seenKey(e[0])]).length;
   pages.done = () => {
     const o = story();
     if (!o || o.status !== 'Returned') return head('Guide summary', 'Finish the guide to see the full record of your order.') + `<a class="btn primary" href="#/welcome">Go to the guide</a>`;
@@ -554,7 +565,7 @@
           <li><span class="dot ok"></span><div><b>Signed for by ${esc(o.clearance.by)}</b> · <a href="#/clearance/${o.id}">view the clearance</a><small>${o.clearance.at}</small></div></li>
           <li><span class="dot ${reports.length ? 'bad' : 'ok'}"></span><div><b>Returned</b> ${reports.length ? `with ${reports.length} report${reports.length > 1 ? 's' : ''} filed` : 'complete, in the same condition'}${reports.length ? `<small>${reports.map(d => `<a href="#/damage/${d.id}">${d.id}</a>`).join(' · ')}</small>` : ''}</div></li>
         </ul></div>
-        <div class="stack"><div class="card"><div class="card-h"><h3>Explore the rest</h3><span class="sub">${exploreSeen()} of ${EXPLORE.length} seen</span></div><ul class="feed">${EXPLORE.map(e => `<li><span class="dot ${S.seen[pathOf(e[0])] ? 'ok' : ''}"></span><div><a href="${e[0]}">${e[1]}</a><small>${e[2]}</small></div></li>`).join('')}</ul></div>
+        <div class="stack"><div class="card"><div class="card-h"><h3>Explore the rest</h3><span class="sub">${exploreSeen()} of ${EXPLORE.length} seen</span></div><ul class="feed">${EXPLORE.map(e => `<li><span class="dot ${S.seen[seenKey(e[0])] ? 'ok' : ''}"></span><div><a href="${e[0]}">${e[1]}</a><small>${e[2]}</small></div></li>`).join('')}</ul></div>
         <button class="btn" style="width:100%;justify-content:center" data-act="restart">Start over</button></div>
       </div>`;
   };
@@ -738,7 +749,7 @@
   pages.damage = (id) => {
     if (id) {
       const d = D.damage.find(x => x.id === id); if (!d) return notFound();
-      const o = order(d.order) || { id: d.order, event: 'TechCon 2025 Expo', clearance: { at: 'Oct 17, 2026 · 8:10 AM', by: 'Mark Villanueva', role: 'Client representative', where: 'SMX Convention Center' } }, it = item(d.sku), c = cust(d.cust);
+      const o = order(d.order) || { id: d.order, event: 'TechCon Product Launch', clearance: { at: 'Oct 17, 2026 · 8:10 AM', by: 'Mark Villanueva', role: 'Customer', where: 'Taguig warehouse' } }, it = item(d.sku), c = cust(d.cust);
       return head(`${d.id}: ${esc(it.name)}${d.unit ? ` <span class="mono" style="font-size:.8em">${d.unit}</span>` : ` × ${d.qty}`}`, `${condName(d.before)} → ${condName(d.after)} · reported ${d.date} by ${d.by}`,
         S.role === 'admin' ? `<button class="btn" data-act="damage-status" data-id="${d.id}" data-to="Under repair">${ic('wrench')}Send to repair</button><button class="btn" data-act="damage-status" data-id="${d.id}" data-to="Written off">Write off</button><button class="btn primary" data-act="damage-status" data-id="${d.id}" data-to="Charged to customer">Charge customer</button>` : '',
         `<a href="#/damage">Damage &amp; loss</a> / ${d.id}`) + `
@@ -846,9 +857,9 @@
       body = `<div class="grid g2">
         <div class="card"><div class="card-h"><h3>Discrepancy report: sent vs. returned</h3></div><table class="tbl"><tr><th>Order</th><th>Item</th><th class="num">Sent</th><th class="num">Back</th><th>Issue</th></tr>
           ${disc.flatMap(o => o.lines.filter(l => (l.back !== undefined && (l.back < l.qty || l.dmg)) || Object.values(l.unitBack || {}).some(x => x !== 'good')).map(l => `<tr class="click" data-go="#/order/${o.id}"><td>${o.id}<small>${esc(o.event)}</small></td><td>${esc(item(l.sku).name)}</td><td class="num">${lineQty(l)}</td><td class="num">${l.units ? l.units.length : l.back}</td><td>${l.units ? Object.entries(l.unitBack).filter(([, v]) => v !== 'good').map(([u, v]) => `<span class="mono">${u}</span> ${condName(v)}`).join(', ') : `${l.qty - l.back ? `${l.qty - l.back} missing` : ''}${l.dmg ? `, ${l.dmg} damaged` : ''}`}</td></tr>`)).join('')}</table></div>
-        <div class="card"><div class="card-h"><h3>Orders by type</h3></div><div class="card-b">
+        ${S.deliveryOn ? `        <div class="card"><div class="card-h"><h3>Orders by type</h3></div><div class="card-b">
           <div class="bars">${[['Delivery', D.orders.filter(o => o.type === 'delivery').length, C.good], ['Pickup', D.orders.filter(o => o.type === 'pickup').length, '#8b5cf6']].map(([l, v, c]) => `<div class="bar"><span>${l}</span><div class="track"><span style="width:${v / D.orders.length * 100}%;background:${c}"></span></div><span class="v">${v}</span></div>`).join('')}</div>
-          <p style="font-size:12.5px;color:var(--ink-3);margin:8px 0 0">This month, sample data</p></div></div>
+          <p style="font-size:12.5px;color:var(--ink-3);margin:8px 0 0">This month, sample data</p></div></div>` : ''}
         <div class="card" style="grid-column:1/-1"><div class="card-h"><h3>Order history</h3><input class="in" style="width:220px" placeholder="Search by date, event, warehouse"></div><table class="tbl"><tr><th>Order</th><th>Type</th><th>Warehouse</th><th>Date</th><th>Status</th></tr>
           ${D.orders.map(o => `<tr class="click" data-go="#/order/${o.id}"><td>${o.id}<small>${esc(o.event)}</small></td><td>${typeTag(o)}</td><td>${wh(o.wh).name}</td><td>${o.date}</td><td>${statusPill(o)}</td></tr>`).join('')}</table></div>
       </div>`;
@@ -861,23 +872,32 @@
           <div class="legend"><span><i style="background:${C.dmg}"></i>Damaged</span><span><i style="background:#7d8aa0"></i>Missing</span></div>
           <div class="bars">${dmg.map(([l, d, m]) => `<div class="bar"><span>${l}</span><div class="track"><span style="width:${d * 10}%;background:${C.dmg}"></span><span style="width:${m * 10}%;background:#7d8aa0"></span></div><span class="v">${d + m}</span></div>`).join('')}</div></div></div>
         <div class="card" style="grid-column:1/-1"><div class="card-h"><h3>Stock movement log (audit trail)</h3></div><table class="tbl"><tr><th>When</th><th>What</th><th>Item</th><th class="num">Qty</th><th>By</th></tr>
-          ${[['Nov 3, 2:14 PM', 'Delivered, clearance signed', 'ORD-1040 · 133 pcs', '', 'Carla Reyes (customer)'], ['Nov 3, 9:02 AM', 'Write-off requested', 'Tiffany Chair (White)', '2', 'Maria Santos'], ['Nov 2, 4:30 PM', 'Stock-in', 'Chair Sash (Gold)', '100', 'Maria Santos'], ['Nov 2, 10:05 AM', 'Released (pickup)', 'ORD-1038 · 14 pcs', '', 'Jomar Ramos'], ['Nov 1, 9:40 AM', 'Released (delivery)', 'ORD-1037 · 242 pcs', '', 'Maria Santos'], ['Oct 30, 3:15 PM', 'Condition: repair → good', '6ft Rectangular Table', '3', 'Juan Dela Cruz'], ['Oct 27, 5:10 PM', 'Returned with discrepancy', 'ORD-1036', '', 'Maria Santos']].map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td class="num">${r[3]}</td><td>${r[4]}</td></tr>`).join('')}</table></div>
+          ${[['Nov 3, 4:32 PM', 'Checklist approved', 'ORD-1039 · 91 pcs', '', 'Rico Bautista'], ['Nov 3, 9:02 AM', 'Write-off requested', 'Tiffany Chair (White)', '2', 'Maria Santos'], ['Nov 2, 4:30 PM', 'Stock-in', 'Chair Sash (Gold)', '100', 'Maria Santos'], ['Nov 2, 10:05 AM', 'Released (pickup)', 'ORD-1038 · 14 pcs', '', 'Jomar Ramos'], ['Nov 1, 9:40 AM', 'Released (pickup)', 'ORD-1037 · 242 pcs', '', 'Maria Santos'], ['Oct 30, 3:15 PM', 'Condition: repair → good', '6ft Rectangular Table', '3', 'Juan Dela Cruz'], ['Oct 27, 5:10 PM', 'Returned with discrepancy', 'ORD-1036', '', 'Maria Santos']].map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td class="num">${r[3]}</td><td>${r[4]}</td></tr>`).join('')}</table></div>
       </div>`;
     }
-    return head('Reports', 'Inventory, deliveries and operations', `<button class="btn" data-act="toast" data-msg="PDF download: available in the full system">${ic('print')}Download PDF</button>`) + `<div class="tabs">${t('inventory', 'Inventory')}${t('deliveries', 'Deliveries & returns')}${t('ops', 'Operations')}</div>` + body;
+    return head('Reports', S.deliveryOn ? 'Inventory, deliveries and operations' : 'Inventory, orders and operations', `<button class="btn" data-act="toast" data-msg="PDF download: available in the full system">${ic('print')}Download PDF</button>`) + `<div class="tabs">${t('inventory', 'Inventory')}${t('deliveries', S.deliveryOn ? 'Deliveries & returns' : 'Orders & returns')}${t('ops', 'Operations')}</div>` + body;
   };
 
   pages.notifications = () => head('Notifications', 'In-app alerts for low stock, order status and return discrepancies') + `
-    <div class="card"><ul class="feed">${D.notifications.map(x => `<li><span class="dot ${x.tone === 'info' ? '' : x.tone}"></span><div style="flex:1"><a href="${x.link}">${esc(x.text)}</a><small>${x.when}</small></div></li>`).join('')}</ul></div>`;
+    <div class="card"><ul class="feed">${notifications().map(x => `<li><span class="dot ${x.tone === 'info' ? '' : x.tone}"></span><div style="flex:1"><a href="${x.link}">${esc(x.text)}</a><small>${x.when}</small></div></li>`).join('')}</ul></div>`;
 
   pages.settings = () => {
-    const tab = S.setTab || 'users';
+    const tab = S.setTab || 'package';
     const t = (k, l) => `<button class="${tab === k ? 'on' : ''}" data-stab="${k}">${l}</button>`;
     let body;
-    if (tab === 'users') body = `<div class="card"><div class="card-h"><h3>Users</h3><button class="btn sm primary" data-act="add-user">${ic('plus')}Add user</button></div><table class="tbl"><tr><th>Name</th><th>Role</th><th>Warehouses</th><th>Status</th></tr>
+    if (tab === 'package') {
+      const row = (name, status, tone) => `<tr><td>${name}</td><td><span class="pill ${tone} nodot">${status}</span></td></tr>`;
+      body = `<div class="grid g-main"><div class="card"><div class="card-h"><h3>What this demo shows</h3></div><table class="tbl"><tr><th>Feature</th><th>In the proposal</th></tr>
+        ${['Inventory, warehouses, categories, adjustments', 'Reservations by date and availability calendar', 'Customer pickup, release checklist, signed clearance', 'Returns, damage records and reports', 'QR labels and phone scanning'].map(x => row(x, 'Package A', 'ok')).join('')}
+        ${row('Delivery orders, status tracking, signing at the venue', 'Add-on: ₱25,000', 'info')}${row('Supervisor role and approvals', 'Add-on: quoted on request', 'info')}${row('Per-unit tracking', 'Add-on: quoted on request', 'info')}${row('Android driver app, GPS and live map', 'Package B, not in this demo', 'mute')}
+        </table></div>
+        <div class="card"><div class="card-h"><h3>Delivery add-on</h3><span class="pill ${S.deliveryOn ? 'ok' : 'mute'}">${S.deliveryOn ? 'On' : 'Off'}</span></div><div class="card-b"><p style="margin:0 0 14px;font-size:13.5px;color:var(--ink-2)">Package A is pickup only: customers collect items at the warehouse and bring them back. Turn this on to see delivery orders, dispatch and signing at the venue.</p>
+        <button class="btn ${S.deliveryOn ? '' : 'primary'}" style="width:100%;justify-content:center" data-act="toggle-delivery">${S.deliveryOn ? 'Turn off the delivery add-on' : 'Turn on the delivery add-on'}</button></div></div></div>`;
+    }
+    else if (tab === 'users') body = `<div class="card"><div class="card-h"><h3>Users</h3><button class="btn sm primary" data-act="add-user">${ic('plus')}Add user</button></div><table class="tbl"><tr><th>Name</th><th>Role</th><th>Warehouses</th><th>Status</th></tr>
       ${D.users.map(u => `<tr><td><div class="cell-item"><div class="avatar">${u.name.split(' ').map(x => x[0]).join('')}</div><div><b>${u.name}</b><small style="color:var(--ink-3)">${u.email}</small></div></div></td><td>${u.role}</td><td>${u.wh}</td><td>${u.active ? '<span class="pill ok">Active</span>' : '<span class="pill mute">Inactive</span>'}</td></tr>`).join('')}</table></div>`;
     else if (tab === 'roles') {
-      const rows = [['View dashboard and inventory', 1, 1, 1], ['Create orders and do the checklist', 1, 1, 1], ['Approve checklists before release', 1, 'own', 0], ['Customer clearance and dispatch', 1, 1, 1], ['Process returns and file damage reports', 1, 1, 1], ['Stock-ins and condition updates', 1, 1, 1], ['Write-offs and transfers', 1, 1, 'approval'], ['Approve stock adjustments', 1, 'own', 0], ['Charge customers for damage', 1, 0, 0], ['Warehouses, categories, reports', 1, 0, 0], ['Users and settings', 1, 0, 0]];
+      const rows = [['View dashboard and inventory', 1, 1, 1], ['Create orders and do the checklist', 1, 1, 1], ['Approve checklists before release', 1, 'own', 0], ['Customer clearance', 1, 1, 1], ['Process returns and file damage reports', 1, 1, 1], ['Stock-ins and condition updates', 1, 1, 1], ['Write-offs and transfers', 1, 1, 'approval'], ['Approve stock adjustments', 1, 'own', 0], ['Charge customers for damage', 1, 0, 0], ['Warehouses, categories, reports', 1, 0, 0], ['Users and settings', 1, 0, 0]];
       const cell = v => v === 1 ? `<span style="color:var(--ok)">${ic('check', 'style="width:18px"')}</span>` : v === 'approval' ? '<span class="pill warn nodot">Needs approval</span>' : v === 'own' ? '<span class="pill info nodot">Own warehouses</span>' : '<span style="color:var(--ink-3)">-</span>';
       body = `<div class="card"><table class="tbl"><tr><th>Permission</th><th>Admin</th><th>Supervisor</th><th>Staff</th></tr>${rows.map(r => `<tr><td>${r[0]}</td><td>${cell(r[1])}</td><td>${cell(r[2])}</td><td>${cell(r[3])}</td></tr>`).join('')}</table></div>`;
     } else body = `<div class="card" style="max-width:640px"><div class="card-b">
@@ -886,7 +906,7 @@
       <div class="grid g2" style="gap:12px"><div class="field"><label class="f">Phone</label><input class="in" value="(02) 8555 0100"></div><div class="field"><label class="f">Email</label><input class="in" value="hello@example.com"></div></div>
       <div class="field"><label class="f">Clearance text (fixed in this demo)</label><textarea class="in" rows="3" readonly>I confirm that I received the items listed above, complete and in the condition stated. Missing or damaged items may be charged.</textarea></div>
       <button class="btn primary" data-act="save-company">Save</button></div></div>`;
-    return head('Settings', 'Users, roles and company profile') + `<div class="tabs">${t('users', 'Users')}${t('roles', 'Roles & permissions')}${t('company', 'Company profile')}</div>` + body;
+    return head('Settings', 'Package, users, roles and company profile') + `<div class="tabs">${t('package', 'Package')}${t('users', 'Users')}${t('roles', 'Roles & permissions')}${t('company', 'Company profile')}</div>` + body;
   };
 
   pages.labels = (params) => {
@@ -904,7 +924,7 @@
   };
 
   pages.phone = () => {
-    const o = order('ORD-1038'), o2 = order('ORD-1041');
+    const o = order('ORD-1038'), o2 = order(S.deliveryOn ? 'ORD-1041' : 'ORD-1039');
     const pr = S.phoneRet || (S.phoneRet = {});
     const pList = [...o.lines.flatMap(l => l.units ? l.units.map(u => ({ k: u, label: item(l.sku).name, code: u })) : [{ k: 'L' + l.sku, label: item(l.sku).name, code: `${l.sku} × ${l.qty}` }])];
     const doneCount = pList.filter(x => pr[x.k]).length;
@@ -923,15 +943,15 @@
 
         <div class="phone-wrap"><div class="phone"><div class="screen">
           <div class="p-status"><span>9:41</span><span>●●● 5G</span></div>
-          <div class="p-bar"><span class="url">🔒 wims.example.com/sign/ORD-1041</span></div>
-          <div class="p-body">${signed ? `<div style="text-align:center;padding-top:60px"><div style="width:70px;height:70px;border-radius:50%;background:var(--ok-bg);color:var(--ok);display:grid;place-items:center;margin:0 auto">${ic('check', 'style="width:36px"')}</div><h4 style="margin-top:14px">Signed and delivered</h4><p style="color:var(--ink-2)">Clearance saved on ORD-1041.<br>The office sees it right away.</p><a class="btn p-btn" href="#/clearance/ORD-1041">View clearance</a></div>` : `
-            <h4>Hand over · ORD-1041</h4><div style="color:var(--ink-3);margin:-4px 0 6px">TechCon 2026 · SMX Convention Center</div>
+          <div class="p-bar"><span class="url">🔒 wims.example.com/sign/${o2.id}</span></div>
+          <div class="p-body">${signed ? `<div style="text-align:center;padding-top:60px"><div style="width:70px;height:70px;border-radius:50%;background:var(--ok-bg);color:var(--ok);display:grid;place-items:center;margin:0 auto">${ic('check', 'style="width:36px"')}</div><h4 style="margin-top:14px">Signed</h4><p style="color:var(--ink-2)">Clearance saved on ${o2.id}.<br>The office sees it right away.</p><a class="btn p-btn" href="#/clearance/${o2.id}">View clearance</a></div>` : `
+            <h4>Hand over · ${o2.id}</h4><div style="color:var(--ink-3);margin:-4px 0 6px">${esc(o2.event)} · ${esc(S.deliveryOn ? 'SMX Convention Center' : wh(o2.wh).name + ' counter')}</div>
             <div class="p-list">${signForm(o2, true).items}</div>
             <p style="font-size:11.5px;line-height:1.5;margin:10px 2px">I confirm I received the items above, complete and in the condition stated.</p>
-            <input class="in" id="p-name" value="Mark Villanueva" style="font-size:12px">
+            <input class="in" id="p-name" value="${esc(cust(o2.cust).contact)}" style="font-size:12px">
             <div class="sig-pad" style="height:110px;margin-top:8px"><canvas id="p-sig"></canvas><div class="hint" style="bottom:24px">Receiver signs here</div></div>
             <button class="btn ok p-btn" id="p-sig-ok" data-act="phone-sign" disabled>${ic('check')}Confirm receipt</button>`}
-          </div></div></div><p><b>Sign at the venue.</b> The receiver checks the items and signs on the staff member's phone. The order moves to Delivered.</p></div>
+          </div></div></div><p>${S.deliveryOn ? "<b>Sign at the venue.</b> The receiver checks the items and signs on the staff member's phone. The order moves to Delivered." : "<b>Sign at the counter.</b> The customer checks the items and signs on the staff member's phone. The order moves to Picked Up."}</p></div>
       </div>`;
   };
 
@@ -946,7 +966,8 @@
     if (ME[params.get('as')]) S.role = params.get('as');
     const parts = path.split('/');
     let key = parts[0] || 'welcome', html;
-    S.seen[pathOf(raw)] = true;
+    S.seen[seenKey(raw)] = true;
+    if (params.get('tab')) S.setTab = params.get('tab');
     if (key === 'orders' && parts[1] === 'new') key = 'orders/new';
     if (S.role !== 'admin' && ADMIN_ONLY.includes(key)) html = head('Admin only', `${me().role} accounts cannot open this page. Switch to Admin at the top to see it.`);
     else if (key === 'item') html = pages.item(parts[1], parts[2]);
@@ -1001,6 +1022,7 @@
     else if (act === 'start-guide') { S.guide = true; S.newOrder = null; navTo(curStep() ? curStep().route() : '#/done'); }
     else if (act === 'skip-guide') { S.guide = false; navTo('#/dashboard?as=admin'); }
     else if (act === 'restart') resetDemo();
+    else if (act === 'toggle-delivery') { setDelivery(!S.deliveryOn); render(); toast(S.deliveryOn ? 'Delivery add-on is on' : 'Back to Package A: pickup only'); }
     else if (act === 'hide-explore') { S.exploreHidden = true; render(); }
     else if (act === 'add-warehouse') addWarehouse();
     else if (act === 'add-category') addCategory();
@@ -1058,10 +1080,11 @@
       setTimeout(() => { S.phoneHit = null; const h = document.querySelector('.cam .hit'); if (h) h.classList.remove('show'); }, 1600);
     }
     else if (act === 'phone-sign') {
-      const o = order('ORD-1041'); const name = document.getElementById('p-name').value || 'Mark Villanueva';
-      S.sigs['ORD-1041'] = document.getElementById('p-sig').toDataURL();
-      o.clearance = { by: name, role: 'Client representative', at: now(), where: o.venue }; o.status = 'Delivered'; o.releasedBy = 'Jomar Ramos';
-      keepScroll(() => {}); toast('ORD-1041 delivered and signed');
+      const o = order(S.deliveryOn ? 'ORD-1041' : 'ORD-1039'), name = document.getElementById('p-name').value || cust(o.cust).contact, pick = o.type === 'pickup';
+      S.sigs[o.id] = document.getElementById('p-sig').toDataURL();
+      o.clearance = { by: name, role: pick ? 'Customer' : 'Client representative', at: now(), where: pick ? wh(o.wh).name + ' warehouse' : o.venue };
+      o.status = pick ? 'Picked Up' : 'Delivered'; o.releasedBy = o.releasedBy || me().name;
+      keepScroll(() => {}); toast(`${o.id} ${o.status.toLowerCase()} and signed`);
     }
   });
 
@@ -1222,7 +1245,7 @@
       <div class="grid g2" style="gap:12px">
         <div class="field"><label class="f">SKU (optional)</label><input class="in" id="i-sku" placeholder="Created for you"></div>
         <div class="field"><label class="f">Category</label><select class="in" id="i-cat">${D.categories.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></div>
-        <div class="field"><label class="f">How is it tracked?</label><select class="in" id="i-track"><option value="count">By count (chairs, tables)</option><option value="unit">Per unit (tents, sound gear)</option></select></div>
+        <div class="field"><label class="f">How is it tracked?</label><select class="in" id="i-track"><option value="count">By count (chairs, tables)</option><option value="unit">Per unit (optional add-on)</option></select></div>
         <div class="field"><label class="f">Low-stock alert below</label><input class="in" id="i-low" type="number" min="0" value="10"></div>
         <div class="field"><label class="f">Warehouse</label><select class="in" id="i-wh">${D.warehouses.map(w => `<option value="${w.id}">${esc(w.name)}</option>`).join('')}</select></div>
         <div class="field"><label class="f">Starting quantity</label><input class="in" id="i-qty" type="number" min="1" value="20"></div>
@@ -1288,7 +1311,7 @@
   }
 
   // ---------- saved in this browser ----------
-  const SAVE_KEY = 'wims-demo-v1';
+  const SAVE_KEY = 'wims-demo-v2';
   let saving = true;
   const saveState = () => { if (!saving) return; try { const { navOpen, ...keep } = S; localStorage.setItem(SAVE_KEY, JSON.stringify({ D, S: keep })); } catch (e) { /* private mode or full: the demo still works, it just won't survive a reload */ } };
   const loadState = () => { try { const st = JSON.parse(localStorage.getItem(SAVE_KEY)); if (!st) return false; Object.assign(D, st.D); Object.assign(S, st.S); return true; } catch (e) { return false; } };
@@ -1301,6 +1324,6 @@
   document.addEventListener('visibilitychange', () => { if (document.hidden) saveState(); });
 
   window.addEventListener('hashchange', () => { S.navOpen = false; render(); window.scrollTo(0, 0); });
-  if (!loadState()) seedRelease();
+  if (!loadState()) { setDelivery(false); seedRelease(); }
   render();
 })();

@@ -1,0 +1,6 @@
+// Cloudflare (Workers static assets): serves only the mockup in ./site, with no build step.
+{
+  "name": "wims-demo",
+  "compatibility_date": "2026-11-01",
+  "assets": { "directory": "./site" }
+}

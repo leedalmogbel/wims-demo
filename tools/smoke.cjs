@@ -192,11 +192,54 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  
   await h.go('#/orders'); check('switching off hides them again', (await page.locator('.tag.delivery').count()) === 0);
   await page.context().close();
 
+  // ---- Real QR scanning: labels decode to working links, and a live camera stream ticks items
+  page = await browser.newContext({ viewport: { width: 1440, height: 900 } }).then(c => c.newPage());
+  page.on('pageerror', e => errors.push('pageerror ' + page.url() + ' ' + e.message));
+  await page.addInitScript(() => {
+    // A fake camera that films whatever QR is in window.__film; it goes through the real scanner code.
+    const canvas = document.createElement('canvas'); canvas.width = 640; canvas.height = 480; const ctx = canvas.getContext('2d');
+    setInterval(() => { ctx.fillStyle = '#9aa'; ctx.fillRect(0, 0, 640, 480); if (window.__film) ctx.drawImage(window.__film, 170, 90, 300, 300); }, 60);
+    Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: { getUserMedia: async () => { if (window.__denyCam) throw Object.assign(new Error('no'), { name: 'NotAllowedError' }); return canvas.captureStream(15); } } });
+  });
+  h = helpers(page);
+  const film = async sel => page.evaluate(async s => { const svg = document.querySelector(s); const img = new Image(); img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new XMLSerializer().serializeToString(Object.assign(svg.cloneNode(true), {}))); await img.decode(); const c = document.createElement('canvas'); c.width = c.height = 300; c.getContext('2d').drawImage(img, 0, 0, 300, 300); window.__film = c; }, sel);
+  await page.goto(BASE + '#/scan'); await page.waitForTimeout(200);
+  await page.evaluate(() => { window.__denyCam = true; }); await page.click('[data-act="scan-start"]'); await page.waitForTimeout(600);
+  check('blocked camera explains what to do', (await page.textContent('#scan-msg')).includes('Allow camera access') && await page.isVisible('[data-act="scan-start"]'));
+  await page.evaluate(() => { window.__denyCam = false; });
+  await page.locator('.qr-sample svg').evaluateAll(els => els.forEach((e, i) => e.setAttribute('id', 'lab' + i)));
+  const labels = await page.locator('.qr-sample .mono').allTextContents();
+  await page.click('[data-act="scan-start"]'); await page.waitForTimeout(500);
+  for (const i of [0, 4]) { await film('#lab' + i); await page.waitForTimeout(1500); check(`camera reads label ${labels[i]}`, (await page.textContent('#scan-result')).includes(labels[i]), (await page.textContent('#scan-result')).replace(/\s+/g, ' ').slice(0, 60)); }
+  await page.screenshot({ path: OUT + 'scan_page.png', fullPage: true });
+  const payload = await page.evaluate(() => { const c = window.__film; return window.jsQR(c.getContext('2d').getImageData(0, 0, 300, 300).data, 300, 300).data; });
+  check('labels hold a link a normal camera can open', payload === new URL(BASE).origin + new URL(BASE).pathname + '#/s/' + labels[4], payload);
+  await page.fill('#scan-typed', 'tnt-1020-007'); await page.click('[data-act="scan-typed"]'); await page.waitForTimeout(60);
+  check('typing a code works', (await page.textContent('#scan-result')).includes('TNT-1020-007'));
+  const tracksBefore = await page.evaluate(() => document.getElementById('scan-video').srcObject.getTracks()[0].readyState);
+  await page.evaluate(() => { window.__v = document.getElementById('scan-video'); });
+  await h.go('#/inventory'); await page.waitForTimeout(100);
+  check('leaving the page stops the camera', tracksBefore === 'live' && await page.evaluate(() => window.__v.srcObject.getTracks()[0].readyState) === 'ended');
+  await h.go('#/s/TNT-1020-007'); check('opening a label link shows that unit', (await page.textContent('.page')).includes('For repair'));
+  await page.screenshot({ path: OUT + 'scan_result.png' });
+  await h.go('#/scan'); await page.waitForTimeout(100);
+  await page.locator('.qr-sample svg').evaluateAll(els => els.forEach((e, i) => e.setAttribute('id', 'lab' + i)));
+  await film('#lab0'); const chairs = await page.evaluate(() => window.__film.toDataURL()); await film('#lab3'); const wrong = await page.evaluate(() => window.__film.toDataURL());
+  await h.go('#/release/ORD-1045'); await page.waitForTimeout(100);
+  const setFilm = u => page.evaluate(async u => { const i = new Image(); i.src = u; await i.decode(); window.__film = i; }, u);
+  await setFilm(chairs); await page.click('[data-act="scan-check"]'); await page.waitForTimeout(1600);
+  check('camera ticks a matching checklist line', (await page.locator('.check-row.done').count()) === 1 && (await page.textContent('#chk-msg')).includes('ticked'), (await page.textContent('#chk-msg')).trim().slice(0, 50));
+  await setFilm(wrong); await page.waitForTimeout(1500);
+  check('camera rejects an item not on the order', (await page.textContent('#chk-msg')).includes('is not on ORD-1045'));
+  await page.screenshot({ path: OUT + 'scan_checklist.png' });
+  await page.click('.modal [data-close]'); await page.waitForTimeout(300);
+  await page.context().close();
+
   // ---- Free exploring
   page = await open(); h = helpers(page); page.on('dialog', d => d.accept());
   await page.goto(BASE); await page.click('[data-act="skip-guide"]'); await page.waitForTimeout(150);
   check('explore lands on the dashboard with no guide', (await page.locator('.guide').count()) === 0 && page.url().includes('dashboard'));
-  check('dashboard shows things to try', (await page.locator('.explore-grid a').count()) === 8);
+  check('dashboard shows things to try', (await page.locator('.explore-grid a').count()) === 9);
   await page.screenshot({ path: OUT + 'explore_dashboard.png', fullPage: true });
   await h.go('#/categories'); await page.click('[data-act="add-category"]'); await page.click('#c-save');
   check('category form requires a name', (await page.textContent('.form-err')).includes('Enter'));
@@ -248,7 +291,7 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  
   await page.context().close();
 
   // ---- Every page, on desktop and at phone width
-  const routes = ['#/welcome', '#/setup?as=admin', '#/dashboard?as=admin', '#/orders', '#/orders/new', '#/calendar', '#/order/ORD-1045', '#/release/ORD-1045?as=staff', '#/approvals?as=supervisor', '#/approve/ORD-1042?as=supervisor', '#/order/ORD-1039', '#/sign/ORD-1039?as=staff', '#/clearance/ORD-1038?as=admin', '#/return/ORD-1037', '#/order/ORD-1036', '#/damage', '#/damage/DMG-0092', '#/damage/DMG-0089', '#/item/TNT-1020/TNT-1020-007', '#/item/CHR-TIF-WHT', '#/inventory', '#/labels', '#/phone', '#/adjustments', '#/reports', '#/settings', '#/warehouses', '#/categories', '#/notifications', '#/done'];
+  const routes = ['#/welcome', '#/setup?as=admin', '#/dashboard?as=admin', '#/orders', '#/orders/new', '#/calendar', '#/order/ORD-1045', '#/release/ORD-1045?as=staff', '#/approvals?as=supervisor', '#/approve/ORD-1042?as=supervisor', '#/order/ORD-1039', '#/sign/ORD-1039?as=staff', '#/clearance/ORD-1038?as=admin', '#/return/ORD-1037', '#/order/ORD-1036', '#/damage', '#/damage/DMG-0092', '#/damage/DMG-0089', '#/item/TNT-1020/TNT-1020-007', '#/item/CHR-TIF-WHT', '#/inventory', '#/labels', '#/scan', '#/s/TNT-1020-007', '#/s/CHR-TIF-WHT', '#/s/NOPE', '#/phone', '#/adjustments', '#/reports', '#/settings', '#/warehouses', '#/categories', '#/notifications', '#/done'];
   page = await open(); h = helpers(page); await page.goto(BASE); let blank = [];
   for (const r of routes) { await h.go(r); if (!(await page.locator('h1').count())) blank.push(r); }
   check('all pages render on desktop', !blank.length, blank.join(' '));

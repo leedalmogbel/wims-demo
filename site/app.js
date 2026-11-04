@@ -9,7 +9,12 @@
   // ---------- state ----------
   const S = {
     role: 'admin',
-    guide: true,
+    guide: false,
+    story: null,
+    setupDone: false,
+    company: 'Sample Events Rental Co.',
+    seen: {},
+    navOpen: false,
     release: {},   // orderId -> { ticks:{key:true}, cond:{key:val} }
     ret: {},       // orderId -> { back:{}, dmg:{}, rep:{}, unit:{} }
     sigs: {},      // orderId -> dataURL
@@ -51,7 +56,32 @@
   const visibleOrders = () => D.orders.filter(o => myWh(o.wh));
   const unitOrder = code => D.orders.find(o => OUT.includes(o.status) && o.lines.some(l => (l.units || []).includes(code)));
   const unitReserved = code => D.orders.find(o => RES.includes(o.status) && o.lines.some(l => (l.units || []).includes(code)));
-  const now = () => { const d = new Date(); return `${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} · ${d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`; };
+  const now = () => `Nov 4, 2026 · ${new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+  const pathOf = h => h.split('?')[0];
+  const routeId = () => pathOf(location.hash).split('/')[2];
+
+  // ---------- dates and availability ----------
+  const DAY = 86400000, BUFFER_DAYS = 1;
+  const TODAY = new Date(2026, 10, 4);
+  const toDate = s => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s); return m ? new Date(+m[1], +m[2] - 1, +m[3]) : new Date(s); };
+  const fmtDate = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const fmtShort = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const isoDate = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const addDays = (d, k) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + k);
+  // An order holds stock from its start date until the return date plus a turnaround day.
+  // Anything overdue keeps holding stock until it actually comes back.
+  const holdEnd = o => { const back = toDate(o.returnDate); return addDays(back < TODAY && OUT.includes(o.status) ? TODAY : back, BUFFER_DAYS); };
+  const holdsFor = (sku, whId, from, to, skip) => D.orders.filter(o => o.id !== skip && o.status !== 'Returned' && o.wh === whId && toDate(o.date) <= to && holdEnd(o) >= from)
+    .flatMap(o => o.lines.filter(l => l.sku === sku).map(l => ({ o, qty: lineQty(l) })));
+  const owned = (sku, whId) => { const it = item(sku);
+    if (it.track === 'unit') return it.units.filter(u => u.wh === whId && u.cond === 'good').length;
+    return (it.stock[whId]?.[0] || 0) + D.orders.filter(o => o.wh === whId && OUT.includes(o.status)).flatMap(o => o.lines).filter(l => l.sku === sku).reduce((a, l) => a + l.qty, 0); };
+  const freeFor = (sku, whId, from, to) => owned(sku, whId) - holdsFor(sku, whId, from, to).reduce((a, h) => a + h.qty, 0);
+  const freeUnits = (sku, whId, from, to) => { const held = new Set(holdsFor(sku, whId, from, to).flatMap(h => h.o.lines.flatMap(l => l.units || [])));
+    return item(sku).units.filter(u => u.wh === whId && u.cond === 'good' && !held.has(u.code)); };
+  // First start date, within 60 days, when every line on the order fits.
+  const nextFit = f => { const span = Math.round((toDate(f.ret) - toDate(f.date)) / DAY);
+    for (let k = 1; k <= 60; k++) { const a = addDays(toDate(f.date), k), b = addDays(a, span); if (f.lines.every(l => l.qty <= freeFor(l.sku, f.wh, a, b))) return [a, b]; } return null; };
 
   function stats(it, whId) {
     const match = w => !whId || (Array.isArray(whId) ? whId.includes(w) : w === whId);
@@ -62,7 +92,7 @@
         if (!match(o.wh)) continue;
         for (const l of o.lines) if (l.sku === it.sku) {
           if (OUT.includes(o.status)) r.out += l.qty;
-          if (RES.includes(o.status)) r.reserved += l.qty;
+          if (RES.includes(o.status) && toDate(o.date) <= TODAY) r.reserved += l.qty;
         }
       }
     } else {
@@ -70,7 +100,8 @@
         if (!match(u.wh)) continue;
         if (unitOrder(u.code)) { r.out++; continue; }
         if (u.cond === 'good') r.good++; else if (u.cond === 'damaged') r.dmg++; else if (u.cond === 'repair') r.rep++;
-        if (u.cond === 'good' && unitReserved(u.code)) r.reserved++;
+        const res = unitReserved(u.code);
+        if (u.cond === 'good' && res && toDate(res.date) <= TODAY) r.reserved++;
       }
     }
     r.avail = r.good - r.reserved;
@@ -120,6 +151,8 @@
     spk: '<rect x="5" y="2" width="14" height="20" rx="2"/><circle cx="12" cy="15" r="3.5"/><circle cx="12" cy="7" r="1.5"/>',
     stage: '<path d="M2 14h20v6H2zM5 14V9h14v5"/>',
     x: '<path d="M6 6l12 12M18 6 6 18"/>',
+    menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
+    cal: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
     arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
     eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>',
   };
@@ -183,64 +216,69 @@
     return `<svg viewBox="0 0 25 25" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><path d="${r}" fill="#111"/></svg>`;
   }
 
-  // ---------- guided tour ----------
-  const TOUR = [
-    ['#/dashboard?as=admin', 'The <b>Admin dashboard</b> (Juan): stock across all warehouses, orders out at events, items that need repair, and anything waiting on you.'],
-    ['#/orders', 'Every order is either a <b>Delivery</b> (we bring the items to the event) or a <b>Pickup</b> (the customer collects them at the warehouse).'],
-    ['#/orders/new', '<b>Creating an order.</b> As you add items, the system checks stock in the chosen warehouse. Try asking for more than is available.'],
-    ['#/order/ORD-1045?as=staff', 'You are now <b>Maria (Staff)</b> at Pasig Main. A pickup needs preparing. Click <b>Start checklist</b>.'],
-    ['#/release/ORD-1045?as=staff', '<b>Staff checklist.</b> Maria counts every line and records its condition, or taps <b>Scan</b>. Submit stays <b>locked</b> until every line is checked. Then <b>Submit for supervisor approval</b>.'],
-    ['#/approvals?as=supervisor', 'You are now <b>Rico (Supervisor)</b> of Pasig Main and Las Piñas. Checklists from his staff wait here for his approval.'],
-    ['#/approve/ORD-1042?as=supervisor', '<b>Supervisor review.</b> Rico sees exactly what Maria counted, reads her note, then <b>approves</b> it or <b>sends it back</b> with a reason.'],
-    ['#/sign/ORD-1039?as=staff', 'Back as <b>Maria</b>. ORD-1039 was approved by Rico, so the customer can now <b>sign the clearance</b> at the counter. Draw a signature to try it.'],
-    ['#/clearance/ORD-1040?as=admin', 'Back as <b>Juan (Admin)</b>. A <b>signed clearance</b> from a delivery: who checked it, who approved it, and who signed for it at the venue.'],
-    ['#/return/ORD-1037', '<b>Processing a return.</b> The released list is shown next to what came back. Change a number or a condition to see shortfalls and damage get flagged.'],
-    ['#/order/ORD-1036', 'A <b>returned order with a discrepancy</b>: 2 chairs missing, 2 damaged, and a tent that came back torn.'],
-    ['#/damage/DMG-0092', 'A <b>damage report</b>. It links the exact tent unit to the order, the customer, and the clearance they signed when it left in good condition.'],
-    ['#/item/TNT-1020/TNT-1020-007', '<b>Per-unit tracking</b> for valuable items. Each tent has its own code and full history: every event, every damage report, every repair.'],
-    ['#/inventory', '<b>Inventory</b>: filter by warehouse, category or condition. Chairs and tables are tracked by count; tents and sound gear per unit.'],
-    ['#/labels', '<b>QR labels.</b> Print on A4 sticker paper with any printer, or use a small thermal label printer. These QR codes are real; try scanning one.'],
-    ['#/phone', '<b>On the phone.</b> Staff open WIMS in the phone browser: scan with the camera, and get the clearance signed at the venue. No app to install.'],
-    ['#/adjustments', '<b>Stock adjustments.</b> Staff record stock-ins and changes; write-offs and transfers wait for the supervisor or Admin to approve.'],
-    ['#/reports', '<b>Reports</b>: inventory, deliveries and operations, including discrepancies and damage per item.'],
-    ['#/settings', '<b>Settings</b>: users, roles and the company profile. See <b>Roles &amp; permissions</b> for what Admin, Supervisor and Staff can each do. Switch roles at the top any time.'],
+  // ---------- guided setup wizard ----------
+  const story = () => (S.story ? order(S.story) : null);
+  const firstName = r => ME[r].name.split(' ')[0];
+  const STEPS = [
+    { key: 'setup', label: 'Set up', role: 'admin', route: () => '#/setup?as=admin', review: () => '#/setup?as=admin', done: () => S.setupDone,
+      summary: 'Add the company, warehouses, stock and team.', task: () => 'Check the company details, warehouses, items and team, then click <b>Finish setup</b>.',
+      doneText: 'Setup is finished.' },
+    { key: 'book', label: 'Book', role: 'staff', route: () => '#/orders/new?as=staff', review: () => `#/order/${S.story}?as=staff`, done: () => !!story(),
+      summary: 'Reserve items for a date, with a double-booking check.', task: () => 'The Nov 8 weekend is already busy, so 450 chairs won\'t fit. <b>Pick a date that fits</b>, then click <b>Save order</b>.',
+      doneText: 'The order is booked and its stock is held for those dates.' },
+    { key: 'check', label: 'Check', role: 'staff', route: () => `#/release/${S.story}?as=staff`, review: () => `#/order/${S.story}?as=staff`, done: () => !!story() && story().status !== 'Preparing',
+      summary: 'Staff count every line and submit it.', task: () => `${story()?.sentBack ? `${esc(story().sentBack.by)} sent this back. ` : ''}<b>Tick every line</b> or tap <b>Scan next item</b>, then click <b>Submit for supervisor approval</b>.`,
+      doneText: 'The checklist went to the supervisor.' },
+    { key: 'approve', label: 'Approve', role: 'supervisor', route: () => `#/approve/${S.story}?as=supervisor`, review: () => `#/order/${S.story}?as=supervisor`, done: () => !!story()?.approval,
+      summary: 'The supervisor approves it or sends it back.', task: () => 'Review what Maria counted, then click <b>Approve</b>. You can also try <b>Send back</b> with a reason.',
+      doneText: 'The supervisor approved it.' },
+    { key: 'handover', label: 'Hand over', role: 'staff', route: () => `#/sign/${S.story}?as=staff`, review: () => `#/clearance/${S.story}?as=staff`, done: () => !!story()?.clearance,
+      summary: 'The customer signs for exactly what they received.', task: () => 'The customer is at the counter. <b>Draw a signature</b>, then click <b>Confirm and sign</b>.',
+      doneText: 'The customer signed the clearance.' },
+    { key: 'return', label: 'Return', role: 'staff', route: () => `#/return/${S.story}?as=staff`, review: () => `#/order/${S.story}?as=staff`, done: () => story()?.status === 'Returned',
+      summary: 'Compare what came back and flag any damage.', task: () => 'Lower the <b>Returned</b> count or change a condition to see the flags, then click <b>Complete return</b>.',
+      doneText: 'The return is complete.' },
   ];
-  const PAGE_TEXT = {
-    dashboard: 'The dashboard.', inventory: 'Inventory list.', item: 'Item details: stock per warehouse, the QR label, and units.', warehouses: 'Warehouse locations and their stock.',
-    categories: 'Item categories.', orders: 'All orders, delivery and pickup.', 'orders/new': 'Create an order.', order: 'Order details.', release: 'Release checklist: every line must be checked before release.',
-    sign: 'Clearance: the receiver signs for exactly what they received.', clearance: 'Signed clearance, ready to print.', return: 'Return processing.', damage: 'Damage and loss reports.',
-    adjustments: 'Stock adjustments.', approve: 'Supervisor review: approve the checklist or send it back.', approvals: 'Approvals.', reports: 'Reports.', notifications: 'Notifications.', settings: 'Settings.', labels: 'QR labels.', phone: 'Phone screens.',
-  };
-  function guideBar(route, key) {
+  const curStep = () => STEPS.find(x => !x.done());
+  function guideBar(route) {
     if (!S.guide) return '';
-    const i = TOUR.findIndex(t => t[0] === route);
-    if (i >= 0) S.lastTour = i;
-    const total = TOUR.length;
-    if (i >= 0) {
-      const prev = i > 0 ? `<a class="prev" href="${TOUR[i - 1][0]}">← Back</a>` : '';
-      const next = i < total - 1 ? `<a href="${TOUR[i + 1][0]}">Next →</a>` : `<a href="#/dashboard">Finish tour ✓</a>`;
-      return `<div class="guide no-print"><span class="step">Tour ${i + 1} / ${total}</span><p>${TOUR[i][1]}</p>${prev}${next}<button class="hide" data-act="hide-guide">Hide</button></div>`;
+    const cur = curStep(), ci = cur ? STEPS.indexOf(cur) : STEPS.length;
+    const chips = STEPS.map((x, i) => {
+      const inner = `<span class="n">${i < ci ? ic('check') : i + 1}</span><span class="t">${x.label}</span>`;
+      if (i > ci) return `<span class="chip" aria-disabled="true" title="Finish ${STEPS[ci].label} first">${inner}</span>`;
+      return `<a class="chip ${i < ci ? 'done' : 'now'}" href="${i < ci ? x.review() : x.route()}" ${i === ci ? 'aria-current="step"' : ''}>${inner}</a>`;
+    }).join('');
+    let row;
+    if (!cur && pathOf(route) === '#/done') row = `<p><b>Guide complete.</b> Everything below is yours to explore.</p>`;
+    else if (!cur) row = `<p><b>All 6 steps are done.</b> See the full record of this order and what else to explore.</p><a class="go" href="#/done">See the summary →</a>`;
+    else {
+      const here = pathOf(route) === pathOf(cur.route()) && S.role === cur.role;
+      const who = `<span class="who">${firstName(cur.role)} · ${ME[cur.role].role}</span>`;
+      if (here) row = `${who}<p>${cur.task()}</p><button class="ghost" data-act="do-step">Do this step for me</button>`;
+      else row = `<p>${ci > 0 ? `<b>${ic('check')}${STEPS[ci - 1].doneText}</b> ` : ''}Next, ${firstName(cur.role)} (${ME[cur.role].role}): ${cur.summary}</p><a class="go" href="${cur.route()}">Continue to ${cur.label} →</a>`;
     }
-    return `<div class="guide no-print"><span class="step">Exploring</span><p>${PAGE_TEXT[key] || ''} Everything here is sample data.</p><a href="${TOUR[Math.min(S.lastTour + 1, total - 1)][0]}">Continue tour →</a><button class="hide" data-act="hide-guide">Hide</button></div>`;
+    return `<div class="guide no-print"><div class="guide-top"><span class="count">Step ${Math.min(ci + 1, 6)} of 6</span><nav class="chips" aria-label="Guide progress">${chips}</nav><button class="hide" data-act="hide-guide">Exit guide</button></div><div class="guide-row">${row}</div></div>`;
   }
 
   // ---------- shell ----------
-  function shell(key, route, body, pageKey) {
+  function shell(key, route, body) {
     const admin = S.role === 'admin';
     const pendingAdj = D.adjustments.filter(a => a.status === 'Pending approval').length;
     const approver = S.role !== 'staff';
     const pendingAll = D.orders.filter(o => o.status === 'For Approval' && canApprove(o)).length + (approver ? pendingAdj : 0);
     const navItem = (href, k, icon, label, extra = '') => `<a href="${href}" class="${key === k ? 'on' : ''}">${ic(icon)}${label}${extra}</a>`;
     const unread = D.notifications.length;
-    return `<div class="shell">
+    return `<div class="shell ${S.navOpen ? 'nav-open' : ''}">
+      <div class="nav-backdrop" data-act="toggle-nav"></div>
       <aside class="side no-print">
-        <div class="brand"><div class="brand-mark">WI</div><div><b>WIMS</b><small>Sample Events Rental Co.</small></div></div>
+        <div class="brand"><div class="brand-mark">WI</div><div><b>WIMS</b><small>${esc(S.company)}</small></div></div>
         <nav class="nav">
           ${navItem('#/dashboard', 'dashboard', 'dash', 'Dashboard')}
           <div class="nav-group">Stock</div>
           ${navItem('#/inventory', 'inventory', 'box', 'Inventory')}
           ${admin ? navItem('#/warehouses', 'warehouses', 'wh', 'Warehouses') : ''}
           ${admin ? navItem('#/categories', 'categories', 'tag', 'Categories') : ''}
+          ${navItem('#/calendar', 'calendar', 'cal', 'Availability')}
           ${navItem('#/adjustments', 'adjustments', 'adj', 'Adjustments')}
           ${navItem('#/labels', 'labels', 'qr', 'QR labels')}
           <div class="nav-group">Orders</div>
@@ -250,17 +288,18 @@
           ${navItem('#/phone', 'phone', 'phone', 'On the phone')}
           ${admin ? `<div class="nav-group">Admin</div>${navItem('#/reports', 'reports', 'chart', 'Reports')}${navItem('#/settings', 'settings', 'gear', 'Settings')}` : ''}
         </nav>
-        <div class="side-foot">Mockup · sample data only<br>Package 1 (web app)</div>
+        <div class="side-foot">${S.guide ? '' : '<a class="btn sm" href="#/welcome" style="margin-bottom:10px">Open the guide</a><br>'}Mockup · sample data only<br>Package 1 (web app)</div>
       </aside>
       <div class="main">
         <header class="topbar no-print">
+          <button class="menu-btn" data-act="toggle-nav" aria-label="Menu">${ic('menu')}</button>
           <div class="search">${ic('search')}<input id="q" placeholder="Search items, SKUs, unit codes, orders…" value="${esc(S.q)}"></div>
           <div class="spacer"></div>
           <div class="role-switch" title="Switch role to compare views">${['admin', 'supervisor', 'staff'].map(r => `<button class="${S.role === r ? 'on' : ''}" data-role="${r}">${ME[r].role}</button>`).join('')}</div>
           <a class="bell" href="#/notifications">${ic('bell')}<i>${unread}</i></a>
           <div class="me"><div class="avatar">${me().name.split(' ').map(x => x[0]).join('')}</div><div><b>${me().name}</b><small>${me().scope}</small></div></div>
         </header>
-        ${guideBar(route, pageKey)}
+        ${guideBar(route)}
         <div class="page">${body}</div>
       </div>
     </div>`;
@@ -410,17 +449,27 @@
       </table></div>`;
   };
 
+  const newOrderDraft = () => {
+    const guided = S.guide && curStep()?.key === 'book';
+    return guided
+      ? { type: 'pickup', wh: 'PSG', cust: 'Mendoza Family', contact: 'Rosa Mendoza', event: 'Mendoza 50th Anniversary', venue: '', date: '2026-11-08', ret: '2026-11-09', lines: [{ sku: 'CHR-TIF-WHT', qty: 450 }, { sku: 'TNT-1020', qty: 1 }] }
+      : { type: 'delivery', wh: me().whs ? me().whs[0] : 'PSG', cust: 'Mendoza Family', contact: 'Rosa Mendoza', event: 'Mendoza 50th Anniversary', venue: 'Fernwood Gardens, Quezon City', date: '2026-11-14', ret: '2026-11-15', lines: [{ sku: 'CHR-TIF-WHT', qty: 100 }, { sku: 'TNT-1020', qty: 1 }] };
+  };
   pages['orders/new'] = () => {
-    const f = S.newOrder || (S.newOrder = { type: 'delivery', wh: 'PSG', lines: [{ sku: 'CHR-TIF-WHT', qty: 100 }, { sku: 'TNT-1020', qty: 1 }] });
+    const f = S.newOrder || (S.newOrder = newOrderDraft());
+    const from = toDate(f.date), to = toDate(f.ret), datesOk = to >= from;
     const whOpts = D.warehouses.filter(w => myWh(w.id)).map(w => `<option value="${w.id}" ${f.wh === w.id ? 'selected' : ''}>${w.name}</option>`).join('');
     const lines = f.lines.map((l, i) => {
-      const it = item(l.sku), s = stats(it, f.wh), ok = l.qty <= s.avail;
-      return `<div class="order-line"><select class="in" data-line="${i}" data-k="sku">${D.items.map(x => `<option value="${x.sku}" ${x.sku === l.sku ? 'selected' : ''}>${esc(x.name)} (${x.sku})</option>`).join('')}</select>
-        <input class="in" type="number" min="1" value="${l.qty}" data-line="${i}" data-k="qty">
-        <span class="avail ${ok ? 'ok' : 'bad'}">${ok ? '✓' : '✕'} ${n(s.avail)} available${it.track === 'unit' && ok ? '<br><small style="font-weight:500;color:var(--ink-3)">units assigned at release</small>' : ''}${!ok ? '<br><small style="font-weight:500">not enough in this warehouse</small>' : ''}</span>
-        <button class="btn sm" data-act="rm-line" data-i="${i}">${ic('x')}</button></div>`; }).join('');
-    const bad = f.lines.some(l => l.qty > stats(item(l.sku), f.wh).avail);
-    return head('New order', 'The system checks stock in the selected warehouse as you add items', '', '<a href="#/orders">Orders</a> / New') + `
+      const it = item(l.sku), free = datesOk ? freeFor(l.sku, f.wh, from, to) : 0, ok = datesOk && l.qty <= free;
+      const holds = datesOk ? holdsFor(l.sku, f.wh, from, to) : [];
+      return `<div class="order-line"><select class="in" data-line="${i}" data-k="sku" aria-label="Item">${D.items.map(x => `<option value="${x.sku}" ${x.sku === l.sku ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>
+        <input class="in" type="number" min="1" value="${l.qty}" data-line="${i}" data-k="qty" aria-label="Quantity">
+        <span class="avail ${ok ? 'ok' : 'bad'}">${ok ? '✓' : '✕'} ${n(Math.max(0, free))} free on these dates${holds.length ? `<br><small>Held: ${holds.map(h => `${h.o.id} (${n(h.qty)})`).join(', ')}</small>` : ''}</span>
+        <button class="btn sm" data-act="rm-line" data-i="${i}" aria-label="Remove line">${ic('x')}</button></div>`; }).join('');
+    const bad = !datesOk || !f.lines.length || f.lines.some(l => l.qty > freeFor(l.sku, f.wh, from, to));
+    const fit = datesOk && bad && f.lines.length ? nextFit(f) : null;
+    const field = (label, key, val) => `<div class="field"><label class="f">${label}</label><input class="in" data-field="${key}" value="${esc(val)}"></div>`;
+    return head('New order', 'Stock is checked for the exact dates, so the same chairs can\'t be booked twice', '', '<a href="#/orders">Orders</a> / New') + `
       <div class="grid g-main">
         <div class="card"><div class="card-b">
           <div class="field"><label class="f">How does the customer get the items?</label>
@@ -429,22 +478,80 @@
               <label class="${f.type === 'pickup' ? 'on' : ''}"><input type="radio" name="t" value="pickup" ${f.type === 'pickup' ? 'checked' : ''} data-k="type"><div><b>${ic('hand', 'style="width:15px;vertical-align:-2px"')} Pickup</b><small>Customer collects at the warehouse. Signs at the counter.</small></div></label>
             </div></div>
           <div class="grid g2" style="gap:12px">
-            <div class="field"><label class="f">Customer</label><input class="in" value="Mendoza Family" id="no-cust"></div>
-            <div class="field"><label class="f">Event name</label><input class="in" value="Mendoza 50th Anniversary" id="no-event"></div>
-            ${f.type === 'delivery' ? '<div class="field"><label class="f">Venue address</label><input class="in" value="Fernwood Gardens, Quezon City" id="no-venue"></div>' : ''}
+            ${field('Customer', 'cust', f.cust)}${field('Event name', 'event', f.event)}
+            ${f.type === 'delivery' ? field('Venue address', 'venue', f.venue) : ''}
             <div class="field"><label class="f">Warehouse</label><select class="in" data-k="wh">${whOpts}</select></div>
-            <div class="field"><label class="f">${f.type === 'delivery' ? 'Delivery date' : 'Pickup date'}</label><input class="in" value="Nov 14, 2026"></div>
-            <div class="field"><label class="f">Return date</label><input class="in" value="Nov 15, 2026"></div>
+            <div class="field"><label class="f">${f.type === 'delivery' ? 'Delivery date' : 'Pickup date'}</label><input class="in" type="date" data-k="date" value="${f.date}"></div>
+            <div class="field"><label class="f">Return date</label><input class="in" type="date" data-k="ret" value="${f.ret}"></div>
           </div>
           <label class="f" style="margin-top:6px">Items</label>
           ${lines}
           <button class="btn sm" data-act="add-line">${ic('plus')}Add item</button>
         </div></div>
         <div class="stack"><div class="card"><div class="card-h"><h3>Summary</h3></div><div class="card-b">
-          <dl class="dl"><dt>Type</dt><dd>${f.type === 'delivery' ? 'Delivery' : 'Pickup'}</dd><dt>Warehouse</dt><dd>${wh(f.wh).name}</dd><dt>Pieces</dt><dd>${n(f.lines.reduce((a, l) => a + Number(l.qty || 0), 0))}</dd></dl>
-          <div style="margin-top:14px">${bad ? note('Some items are short in this warehouse. Lower the quantity, or pick another warehouse.', 'bad') : note('Stock is available. It will be <b>reserved</b> as soon as the order is saved, so no one else can book it.', 'ok')}</div>
-          <button class="btn primary" style="width:100%;justify-content:center;margin-top:14px" data-act="save-order" ${bad ? 'disabled' : ''}>Save order</button>
+          <dl class="dl"><dt>Type</dt><dd>${f.type === 'delivery' ? 'Delivery' : 'Pickup'}</dd><dt>Warehouse</dt><dd>${wh(f.wh).name}</dd><dt>Dates</dt><dd>${datesOk ? `${fmtShort(from)} to ${fmtShort(to)}` : 'Check the dates'}</dd><dt>Pieces</dt><dd>${n(f.lines.reduce((a, l) => a + Number(l.qty || 0), 0))}</dd></dl>
+          <div style="margin-top:14px">${!datesOk ? note('The return date is before the pickup date.', 'bad') : bad ? note('<b>Would be double-booked.</b> Some items are already held on these dates. Change the dates, lower the quantity, or pick another warehouse.', 'bad') : note('Stock is free on these dates. It will be <b>held</b> as soon as the order is saved, so no one else can book it.', 'ok')}</div>
+          ${fit ? `<button class="btn" style="width:100%;justify-content:center;margin-top:10px" data-act="use-dates" data-a="${isoDate(fit[0])}" data-b="${isoDate(fit[1])}">Use the next dates that fit: ${fmtShort(fit[0])} to ${fmtShort(fit[1])}</button>` : ''}
+          <button class="btn primary" style="width:100%;justify-content:center;margin-top:10px" data-act="save-order" ${bad ? 'disabled' : ''}>Save order</button>
+          <p style="font-size:12px;color:var(--ink-3);margin:10px 0 0">Each order also holds stock for ${BUFFER_DAYS} turnaround day after its return date. <a href="#/calendar">See the availability calendar</a></p>
         </div></div></div>
+      </div>`;
+  };
+
+  pages.calendar = () => {
+    const opts = D.warehouses.filter(w => myWh(w.id));
+    if (!opts.some(w => w.id === S.calWh)) S.calWh = opts[0].id;
+    const days = Array.from({ length: 14 }, (_, i) => addDays(TODAY, i));
+    const rows = D.items.filter(it => owned(it.sku, S.calWh) > 0);
+    return head('Availability', 'How many pieces are free each day, after every order and turnaround day') + `
+      <div class="filters"><select class="in" data-cal aria-label="Warehouse">${opts.map(w => `<option value="${w.id}" ${w.id === S.calWh ? 'selected' : ''}>${w.name}</option>`).join('')}</select></div>
+      <div class="legend"><span><i class="cal-key"></i>Plenty free</span><span><i class="cal-key low"></i>Running low</span><span><i class="cal-key none"></i>None free</span></div>
+      <div class="card scroll-x"><table class="tbl cal"><tr><th>Item</th>${days.map(d => `<th class="num ${[0, 6].includes(d.getDay()) ? 'wknd' : ''}">${d.toLocaleDateString('en-US', { weekday: 'short' })}<br>${fmtShort(d)}</th>`).join('')}</tr>
+      ${rows.map(it => `<tr><td class="cal-item"><a href="#/item/${it.sku}">${esc(it.name)}</a><small>${n(owned(it.sku, S.calWh))} owned</small></td>${days.map(d => { const fr = freeFor(it.sku, S.calWh, d, d), hs = holdsFor(it.sku, S.calWh, d, d);
+        return `<td class="num ${fr <= 0 ? 'none' : fr <= it.low ? 'low' : ''} ${[0, 6].includes(d.getDay()) ? 'wknd' : ''}" title="${hs.length ? 'Held by ' + hs.map(h => `${h.o.id} (${h.qty})`).join(', ') : 'Nothing held'}">${n(Math.max(0, fr))}</td>`; }).join('')}</tr>`).join('')}</table></div>`;
+  };
+
+  pages.setup = () => {
+    const lower = S.setupDone ? note('Setup is finished. You can change any of this later in Settings.', 'ok') : '';
+    return head('Set up your business', 'Only what WIMS needs to start. Everything can be changed later.', '', '') + `
+      <div class="grid g-main">
+        <div class="stack">
+          <div class="card"><div class="card-h"><h3>1. Company</h3></div><div class="card-b"><div class="field" style="margin:0"><label class="f">Company name (printed on clearances and labels)</label><input class="in" data-company value="${esc(S.company)}"></div></div></div>
+          <div class="card"><div class="card-h"><h3>2. Warehouses</h3><span class="sub">${D.warehouses.length} of 5 included</span></div><ul class="feed">${D.warehouses.map(w => `<li><span class="dot ok"></span><div><b>${w.name}</b><small>${esc(w.address)}</small></div></li>`).join('')}</ul></div>
+          <div class="card"><div class="card-h"><h3>3. Items and stock</h3><span class="pill ok">Imported</span></div><div class="card-b" style="font-size:13.5px">${note(`<b>${D.items.length} items</b> imported from your Excel file, with stock for each warehouse. Tents, sound gear and LED lights are tracked per unit; the rest by count.`, 'ok')}</div></div>
+          <div class="card"><div class="card-h"><h3>4. Team</h3></div><div class="scroll-x"><table class="tbl"><tr><th>Name</th><th>Role</th><th>Warehouses</th></tr>${D.users.filter(u => u.active).map(u => `<tr><td><b>${u.name}</b></td><td>${u.role}</td><td>${u.wh}</td></tr>`).join('')}</table></div></div>
+        </div>
+        <div class="stack"><div class="card"><div class="card-b">
+          <h3 style="margin:0 0 6px;font-size:15px">Ready to start</h3><p style="margin:0 0 14px;color:var(--ink-2);font-size:13.5px">This sample business is already filled in. A real setup uses your own list.</p>
+          ${lower}${S.setupDone ? '' : `<button class="btn primary" style="width:100%;justify-content:center" data-act="finish-setup">${ic('check')}Finish setup</button>`}
+        </div></div></div>
+      </div>`;
+  };
+
+  pages.welcome = () => `<main class="welcome"><div class="welcome-card">
+      <div class="brand"><div class="brand-mark">WI</div><div><b>WIMS</b><small>Warehouse Inventory Management System</small></div></div>
+      <h1>See one order go from booking to return</h1>
+      <p class="lead">You'll set up a sample rental business, then play each person on the team. It takes a few minutes, and everything here is sample data.</p>
+      <ol class="w-steps">${STEPS.map(x => `<li><span class="n">${STEPS.indexOf(x) + 1}</span><div><b>${x.label}</b><span class="who-sm">${ME[x.role].role}</span><small>${x.summary}</small></div></li>`).join('')}</ol>
+      <div class="w-actions"><button class="btn primary" data-act="start-guide">Start the guide ${ic('arrow')}</button><button class="btn" data-act="skip-guide">Explore on my own</button></div>
+    </div></main>`;
+
+  pages.done = () => {
+    const o = story();
+    if (!o || o.status !== 'Returned') return head('Guide summary', 'Finish the guide to see the full record of your order.') + `<a class="btn primary" href="#/welcome">Go to the guide</a>`;
+    const reports = D.damage.filter(d => d.order === o.id);
+    const explore = [['#/calendar', 'Availability calendar', 'What is free each day, per warehouse'], ['#/item/TNT-1020/TNT-1020-007', 'Per-unit history', 'Every event and damage report for one tent'], ['#/labels', 'QR labels', 'Print stickers; the codes really scan'], ['#/phone', 'On the phone', 'Scanning, and signing at a venue'], ['#/approvals?as=admin', 'Approvals', 'Checklists and stock changes waiting'], ['#/reports?as=admin', 'Reports', 'Stock, discrepancies, damage per item'], ['#/settings?as=admin', 'Roles and permissions', 'What each role can do']];
+    return head('That\'s the whole flow', `${o.id} · ${esc(o.event)}: every step is on record`) + `
+      <div class="grid g-main">
+        <div class="card"><div class="card-h"><h3>The record of this order</h3></div><ul class="feed">
+          <li><span class="dot ok"></span><div><b>Booked</b> for ${o.date} to ${o.returnDate}, with stock held for those dates</div></li>
+          <li><span class="dot ok"></span><div><b>Checked by ${o.check.by}</b><small>${o.check.at}</small></div></li>
+          <li><span class="dot ok"></span><div><b>Approved by ${o.approval.by}</b><small>${o.approval.at}</small></div></li>
+          <li><span class="dot ok"></span><div><b>Signed for by ${esc(o.clearance.by)}</b> · <a href="#/clearance/${o.id}">view the clearance</a><small>${o.clearance.at}</small></div></li>
+          <li><span class="dot ${reports.length ? 'bad' : 'ok'}"></span><div><b>Returned</b> ${reports.length ? `with ${reports.length} report${reports.length > 1 ? 's' : ''} filed` : 'complete, in the same condition'}${reports.length ? `<small>${reports.map(d => `<a href="#/damage/${d.id}">${d.id}</a>`).join(' · ')}</small>` : ''}</div></li>
+        </ul></div>
+        <div class="stack"><div class="card"><div class="card-h"><h3>Explore the rest</h3><span class="sub">${explore.filter(e => S.seen[pathOf(e[0])]).length} of ${explore.length} seen</span></div><ul class="feed">${explore.map(e => `<li><span class="dot ${S.seen[pathOf(e[0])] ? 'ok' : ''}"></span><div><a href="${e[0]}">${e[1]}</a><small>${e[2]}</small></div></li>`).join('')}</ul></div>
+        <button class="btn" style="width:100%;justify-content:center" data-act="restart">Start over</button></div>
       </div>`;
   };
 
@@ -569,7 +676,7 @@
     return `<div class="no-print">${head('Clearance', `${o.id} · ${esc(o.event)}`, `<button class="btn primary" data-act="print">${ic('print')}Print</button><a class="btn" href="#/order/${id}">Back to order</a>`, `<a href="#/order/${id}">${o.id}</a> / Clearance`)}</div>
       <div class="clearance-doc">
         <div style="display:flex;justify-content:space-between;align-items:flex-start">
-          <div><div style="font-weight:800;color:var(--blue);font-size:13px;letter-spacing:.04em">SAMPLE EVENTS RENTAL CO.</div><h2>${o.type === 'pickup' ? 'Pickup' : 'Delivery'} Clearance</h2><div class="mono" style="color:var(--ink-3);margin-top:2px">CLR-${o.id.slice(4)} · ${o.id}</div></div>
+          <div><div style="font-weight:800;color:var(--blue);font-size:13px;letter-spacing:.04em">${esc(S.company).toUpperCase()}</div><h2>${o.type === 'pickup' ? 'Pickup' : 'Delivery'} Clearance</h2><div class="mono" style="color:var(--ink-3);margin-top:2px">CLR-${o.id.slice(4)} · ${o.id}</div></div>
           <span class="stamp">SIGNED</span>
         </div>
         <dl class="dl" style="margin:22px 0;grid-template-columns:150px 1fr 120px 1fr">
@@ -599,7 +706,7 @@
       if (dmg) flags.push(`<b>${dmg} × ${esc(it.name)}</b> damaged`);
       if (rep) flags.push(`<b>${rep} × ${esc(it.name)}</b> need repair`);
       return `<div class="ret-row ${miss || dmg || rep ? 'flag' : ''}"><div>${lineLabel(l)}</div><div class="num"><b>${n(l.qty)}</b><small style="display:block;color:var(--ink-3)">good</small></div>
-        <input class="in" type="number" min="0" max="${l.qty}" value="${back}" data-ret="back" data-k="${k}"><input class="in" type="number" min="0" value="${dmg}" data-ret="dmg" data-k="${k}"><input class="in" type="number" min="0" value="${rep}" data-ret="rep" data-k="${k}">
+        <label class="ret-f"><span>Returned</span><input class="in" type="number" min="0" max="${l.qty}" value="${back}" data-ret="back" data-k="${k}"></label><label class="ret-f"><span>Damaged</span><input class="in" type="number" min="0" value="${dmg}" data-ret="dmg" data-k="${k}"></label><label class="ret-f"><span>For repair</span><input class="in" type="number" min="0" value="${rep}" data-ret="rep" data-k="${k}"></label>
         <div>${miss ? `<span class="pill bad">${miss} missing</span> ` : ''}${dmg ? `<span class="pill bad">${dmg} damaged</span> ` : ''}${rep ? `<span class="pill warn">${rep} repair</span> ` : ''}${!miss && !dmg && !rep ? `<span class="pill ok">${n(good)} good, complete</span>` : ''}</div></div>`; }).join('');
     const unitRows = o.lines.filter(l => l.units).map(l => { const it = item(l.sku);
       return `<div class="check-group-h" style="padding-top:14px">${thumb(it)}<div>${esc(it.name)} <small style="color:var(--ink-3);font-weight:500">· per unit</small></div></div>` + l.units.map(u => {
@@ -770,7 +877,7 @@
       const cell = v => v === 1 ? `<span style="color:var(--ok)">${ic('check', 'style="width:18px"')}</span>` : v === 'approval' ? '<span class="pill warn nodot">Needs approval</span>' : v === 'own' ? '<span class="pill info nodot">Own warehouses</span>' : '<span style="color:var(--ink-3)">-</span>';
       body = `<div class="card"><table class="tbl"><tr><th>Permission</th><th>Admin</th><th>Supervisor</th><th>Staff</th></tr>${rows.map(r => `<tr><td>${r[0]}</td><td>${cell(r[1])}</td><td>${cell(r[2])}</td><td>${cell(r[3])}</td></tr>`).join('')}</table></div>`;
     } else body = `<div class="card" style="max-width:640px"><div class="card-b">
-      <div class="field"><label class="f">Company name</label><input class="in" value="Sample Events Rental Co."></div>
+      <div class="field"><label class="f">Company name</label><input class="in" value="${esc(S.company)}"></div>
       <div class="field"><label class="f">Address</label><input class="in" value="Ortigas Ave. Ext., Pasig City"></div>
       <div class="grid g2" style="gap:12px"><div class="field"><label class="f">Phone</label><input class="in" value="(02) 8555 0100"></div><div class="field"><label class="f">Email</label><input class="in" value="hello@example.com"></div></div>
       <div class="field"><label class="f">Clearance text (printed on every clearance)</label><textarea class="in" rows="3">I confirm that I received the items listed above, complete and in the condition stated. Missing or damaged items may be charged.</textarea></div>
@@ -784,7 +891,7 @@
     const it = item(sku), fmt = S.labelFmt || 'a4';
     let codes = it.track === 'unit' ? it.units.map(u => u.code) : Array(21).fill(it.sku);
     codes = codes.slice(0, 21);
-    const lab = code => `<div class="label"><div class="qr">${qrSvg('WIMS:' + code)}</div><div><b>${esc(it.name)}</b><span class="mono">${code}</span><small>Sample Events Rental Co.</small></div></div>`;
+    const lab = code => `<div class="label"><div class="qr">${qrSvg('WIMS:' + code)}</div><div><b>${esc(it.name)}</b><span class="mono">${code}</span><small>${esc(S.company)}</small></div></div>`;
     return `<div class="no-print">${head('QR labels', 'Print stickers for items and units. Phone cameras read QR codes quickly, even on small labels.', `<button class="btn primary" data-act="print">${ic('print')}Print</button>`)}
       <div class="filters"><select class="in" data-label="sku">${D.items.map(x => `<option value="${x.sku}" ${x.sku === sku ? 'selected' : ''}>${esc(x.name)}${x.track === 'unit' ? ` (${x.units.length} units)` : ''}</option>`).join('')}</select>
       <select class="in" data-label="fmt"><option value="a4" ${fmt === 'a4' ? 'selected' : ''}>A4 sticker paper, 21 per sheet (any printer)</option><option value="thermal" ${fmt === 'thermal' ? 'selected' : ''}>Thermal label printer, 50×30mm</option></select></div>
@@ -825,16 +932,17 @@
   };
 
   const notFound = () => head('Not found', 'This page does not exist in the mockup.') + '<a class="btn" href="#/dashboard">Go to dashboard</a>';
-  const ADMIN_ONLY = ['warehouses', 'categories', 'reports', 'settings'];
+  const ADMIN_ONLY = ['warehouses', 'categories', 'reports', 'settings', 'setup'];
 
   // ---------- router ----------
   function render() {
-    const raw = location.hash || '#/dashboard';
+    const raw = location.hash || '#/welcome';
     const [path, qs] = raw.slice(2).split('?');
     const params = new URLSearchParams(qs || '');
     if (ME[params.get('as')]) S.role = params.get('as');
     const parts = path.split('/');
-    let key = parts[0] || 'dashboard', html;
+    let key = parts[0] || 'welcome', html;
+    S.seen[pathOf(raw)] = true;
     if (key === 'orders' && parts[1] === 'new') key = 'orders/new';
     if (S.role !== 'admin' && ADMIN_ONLY.includes(key)) html = head('Admin only', `${me().role} accounts cannot open this page. Switch to Admin at the top to see it.`);
     else if (key === 'item') html = pages.item(parts[1], parts[2]);
@@ -843,7 +951,7 @@
     else if (key === 'labels') html = pages.labels(params);
     else html = (pages[key] || notFound)();
     const navKey = { approve: 'approvals', item: 'inventory', order: 'orders', 'orders/new': 'orders', release: 'orders', sign: 'orders', clearance: 'orders', return: 'orders', notifications: '' }[key] ?? key;
-    app.innerHTML = shell(navKey, raw, html, key);
+    app.innerHTML = key === 'welcome' ? html : shell(navKey, raw, html);
     mount(key);
   }
 
@@ -881,15 +989,22 @@
     const rt = e.target.closest('[data-rtab]'); if (rt) { S.repTab = rt.dataset.rtab; render(); return; }
     const st = e.target.closest('[data-stab]'); if (st) { S.setTab = st.dataset.stab; render(); return; }
     const tk = e.target.closest('[data-tick]');
-    if (tk) { const id = location.hash.split('/')[2]; const r = S.release[id]; r.ticks[tk.dataset.tick] = !r.ticks[tk.dataset.tick]; keepScroll(() => {}); return; }
+    if (tk) { const id = routeId(); const r = S.release[id]; r.ticks[tk.dataset.tick] = !r.ticks[tk.dataset.tick]; keepScroll(() => {}); return; }
     const a = e.target.closest('[data-act]'); if (!a) return;
     const act = a.dataset.act, id = a.dataset.id;
     if (act === 'hide-guide') { S.guide = false; render(); }
+    else if (act === 'start-guide') { S.guide = true; S.newOrder = null; navTo(curStep() ? curStep().route() : '#/done'); }
+    else if (act === 'skip-guide') { S.guide = false; navTo('#/dashboard?as=admin'); }
+    else if (act === 'restart') { location.hash = '#/welcome'; location.reload(); }
+    else if (act === 'toggle-nav') { S.navOpen = !S.navOpen; render(); }
+    else if (act === 'finish-setup') { S.setupDone = true; keepScroll(() => {}); toast('Setup finished'); }
+    else if (act === 'do-step') doStep();
+    else if (act === 'use-dates') { S.newOrder.date = a.dataset.a; S.newOrder.ret = a.dataset.b; keepScroll(() => {}); }
     else if (act === 'toast') toast(a.dataset.msg);
     else if (act === 'print') window.print();
     else if (act === 'clear-q') { S.q = ''; render(); }
     else if (act === 'add-item') toast('Add item form: name, SKU, category, tracking (by count / per unit), image (mockup)');
-    else if (act === 'status') { const o = order(location.hash.split('/')[2]); o.status = a.dataset.to; render(); toast(`${o.id} is now ${o.status}`); }
+    else if (act === 'status') { const o = order(routeId()); o.status = a.dataset.to; render(); toast(`${o.id} is now ${o.status}`); }
     else if (act === 'scan') {
       const o = order(id), r = S.release[id]; const keys = []; o.lines.forEach((l, i) => l.units ? l.units.forEach(u => keys.push(u)) : keys.push('L' + i));
       const k = keys.find(x => !r.ticks[x]); if (!k) { toast('Everything is already checked'); return; }
@@ -899,33 +1014,16 @@
     else if (act === 'dispatch') { const o = order(id); o.status = 'In Transit'; o.releasedBy = me().name; o.lines.forEach(l => {}); navTo('#/order/' + id); toast(`${o.id} dispatched. The receiver signs at the venue.`); }
     else if (act === 'sig-clear') document.getElementById('sig')._clear();
     else if (act === 'sign') {
-      const o = order(id); const name = document.getElementById('sig-name').value.trim() || cust(o.cust).contact;
-      S.sigs[id] = document.getElementById('sig').toDataURL();
-      o.clearance = { by: name, role: document.getElementById('sig-role').value, at: now(), where: o.type === 'pickup' ? wh(o.wh).name + ' warehouse' : o.venue };
-      o.releasedBy = o.releasedBy || me().name;
-      o.status = o.type === 'pickup' ? 'Picked Up' : 'Delivered';
-      D.notifications.unshift({ tone: 'ok', text: `${o.id} ${o.status.toLowerCase()}, clearance signed by ${name}`, when: 'Just now', link: '#/order/' + id });
-      navTo('#/clearance/' + id); toast('Clearance signed and saved on the order');
+      const name = document.getElementById('sig-name').value.trim() || cust(order(id).cust).contact;
+      signOrder(id, name, document.getElementById('sig-role').value, document.getElementById('sig').toDataURL());
     }
     else if (act === 'scan-ret') {
       const o = order(id), r = S.ret[id]; const u = o.lines.flatMap(l => l.units || []).find(x => !r.scanned[x]);
       if (!u) { toast('All units scanned'); return; } r.scanned[u] = true; keepScroll(() => {}); toast(`Scanned ${u}: belongs to ${o.id}`);
     }
     else if (act === 'finish-return') finishReturn(id);
-    else if (act === 'submit-check') {
-      const o = order(id), r = S.release[id];
-      o.check = { by: me().name, at: now(), note: document.getElementById('chk-note').value.trim(), cond: { ...r.cond } };
-      o.status = 'For Approval'; o.sentBack = null;
-      D.notifications.unshift({ tone: 'warn', text: `${o.id} ${o.event} checklist submitted by ${me().name}, waiting for approval`, when: 'Just now', link: '#/approve/' + id });
-      navTo('#/order/' + id); toast(`Submitted. ${supervisorOf(o.wh)} (Supervisor) has been notified.`);
-    }
-    else if (act === 'approve-order') {
-      const o = order(id);
-      o.approval = { by: me().name, role: me().role, at: now() };
-      o.status = o.type === 'pickup' ? 'Ready for Pickup' : 'Ready to Dispatch';
-      D.notifications.unshift({ tone: 'ok', text: `${o.id} approved by ${me().name}: ${o.status.toLowerCase()}`, when: 'Just now', link: '#/order/' + id });
-      navTo('#/order/' + id); toast(`Approved. ${o.id} is ${o.status}. ${o.check.by} has been notified.`);
-    }
+    else if (act === 'submit-check') { submitCheck(id, document.getElementById('chk-note').value.trim()); }
+    else if (act === 'approve-order') { approveOrder(id); }
     else if (act === 'send-back') {
       const o = order(id), reason = document.getElementById('back-reason').value.trim();
       if (!reason) { toast('Add a reason so staff know what to fix'); document.getElementById('back-reason').focus(); return; }
@@ -957,16 +1055,23 @@
   document.addEventListener('change', e => {
     const t = e.target;
     if (t.dataset.filter) { S.invFilter[t.dataset.filter] = t.value; render(); }
-    else if (t.dataset.cond) { const id = location.hash.split('/')[2]; S.release[id].cond[t.dataset.cond] = t.value; }
-    else if (t.dataset.ret) { const id = location.hash.split('/')[2]; S.ret[id][t.dataset.ret][t.dataset.k] = Math.max(0, parseInt(t.value || '0', 10)); keepScroll(() => {}); }
-    else if (t.dataset.unit) { const id = location.hash.split('/')[2]; S.ret[id].unit[t.dataset.unit] = t.value; keepScroll(() => {}); }
+    else if (t.dataset.cond) { const id = routeId(); S.release[id].cond[t.dataset.cond] = t.value; }
+    else if (t.dataset.ret) { const id = routeId(); S.ret[id][t.dataset.ret][t.dataset.k] = Math.max(0, parseInt(t.value || '0', 10)); keepScroll(() => {}); }
+    else if (t.dataset.unit) { const id = routeId(); S.ret[id].unit[t.dataset.unit] = t.value; keepScroll(() => {}); }
     else if (t.dataset.label) { if (t.dataset.label === 'sku') { S.labelSku = t.value; location.hash = '#/labels?sku=' + t.value; } else { S.labelFmt = t.value; render(); } }
-    else if (S.newOrder && location.hash === '#/orders/new' && (t.dataset.k || t.dataset.line)) {
+    else if (t.dataset.cal !== undefined) { S.calWh = t.value; render(); }
+    else if (S.newOrder && pathOf(location.hash) === '#/orders/new' && (t.dataset.k || t.dataset.line)) {
       if (t.dataset.line !== undefined) { const l = S.newOrder.lines[+t.dataset.line]; if (t.dataset.k === 'qty') l.qty = Math.max(1, parseInt(t.value || '1', 10)); else l.sku = t.value; }
       else if (t.dataset.k === 'type') S.newOrder.type = t.value;
       else if (t.dataset.k === 'wh') S.newOrder.wh = t.value;
+      else if (t.dataset.k === 'date' || t.dataset.k === 'ret') { if (t.value) S.newOrder[t.dataset.k] = t.value; }
       keepScroll(() => {});
     }
+  });
+  document.addEventListener('input', e => {
+    const t = e.target;
+    if (t.dataset.field && S.newOrder) S.newOrder[t.dataset.field] = t.value;
+    if (t.dataset.company !== undefined) S.company = t.value;
   });
   document.addEventListener('keydown', e => {
     if (e.target.id === 'q' && e.key === 'Enter') { S.q = e.target.value.trim(); const u = allUnits().find(x => x.code.toLowerCase() === S.q.toLowerCase()); const o = order(S.q.toUpperCase());
@@ -974,14 +1079,53 @@
   });
 
   function saveOrder() {
-    const f = S.newOrder; const id = 'ORD-' + S.nextOrder++;
-    const lines = f.lines.map(l => { const it = item(l.sku);
-      if (it.track === 'unit') { const free = it.units.filter(u => u.wh === f.wh && u.cond === 'good' && !unitOrder(u.code) && !unitReserved(u.code)); return { sku: l.sku, units: free.slice(0, l.qty).map(u => u.code) }; }
-      return { sku: l.sku, qty: l.qty }; });
-    D.orders.unshift({ id, type: f.type, event: document.getElementById('no-event').value, venue: f.type === 'delivery' ? (document.getElementById('no-venue')?.value || '') : `Customer pickup at ${wh(f.wh).name}`, wh: f.wh,
-      cust: 'new', date: 'Nov 14, 2026', returnDate: 'Nov 15, 2026', status: 'Preparing', lines });
-    D.customers.new = { name: document.getElementById('no-cust').value, contact: 'Rosa Mendoza', phone: '0917 555 0166' };
-    S.newOrder = null; navTo('#/order/' + id); toast(`${id} saved. Stock is reserved.`);
+    const f = S.newOrder, id = 'ORD-' + S.nextOrder++, from = toDate(f.date), to = toDate(f.ret), custKey = 'c' + id;
+    const lines = f.lines.map(l => item(l.sku).track === 'unit' ? { sku: l.sku, units: freeUnits(l.sku, f.wh, from, to).slice(0, l.qty).map(u => u.code) } : { sku: l.sku, qty: l.qty });
+    D.customers[custKey] = { name: f.cust, contact: f.contact, phone: '0917 555 0166' };
+    D.orders.unshift({ id, type: f.type, event: f.event, venue: f.type === 'delivery' ? f.venue : `Customer pickup at ${wh(f.wh).name}`, wh: f.wh, cust: custKey, date: fmtDate(from), returnDate: fmtDate(to), status: 'Preparing', lines });
+    if (S.guide && curStep()?.key === 'book') S.story = id;
+    S.newOrder = null; navTo('#/order/' + id); toast(`${id} saved. Stock is held for ${fmtShort(from)} to ${fmtShort(to)}.`);
+  }
+
+  function submitCheck(id, note_) {
+    const o = order(id), r = S.release[id];
+    o.check = { by: me().name, at: now(), note: note_, cond: { ...r.cond } };
+    o.status = 'For Approval'; o.sentBack = null;
+    D.notifications.unshift({ tone: 'warn', text: `${o.id} ${o.event} checklist submitted by ${me().name}, waiting for approval`, when: 'Just now', link: '#/approve/' + id });
+    navTo('#/order/' + id); toast(`Submitted. ${supervisorOf(o.wh)} (Supervisor) has been notified.`);
+  }
+  function approveOrder(id) {
+    const o = order(id);
+    o.approval = { by: me().name, role: me().role, at: now() };
+    o.status = o.type === 'pickup' ? 'Ready for Pickup' : 'Ready to Dispatch';
+    D.notifications.unshift({ tone: 'ok', text: `${o.id} approved by ${me().name}: ${o.status.toLowerCase()}`, when: 'Just now', link: '#/order/' + id });
+    navTo('#/order/' + id); toast(`Approved. ${o.id} is ${o.status}. ${o.check.by} has been notified.`);
+  }
+  function signOrder(id, name, role, sig) {
+    const o = order(id);
+    if (sig) S.sigs[id] = sig;
+    o.clearance = { by: name, role, at: now(), where: o.type === 'pickup' ? wh(o.wh).name + ' warehouse' : o.venue };
+    o.releasedBy = o.releasedBy || me().name;
+    o.status = o.type === 'pickup' ? 'Picked Up' : 'Delivered';
+    D.notifications.unshift({ tone: 'ok', text: `${o.id} ${o.status.toLowerCase()}, clearance signed by ${name}`, when: 'Just now', link: '#/order/' + id });
+    navTo('#/clearance/' + id); toast('Clearance signed and saved on the order');
+  }
+  // "Do this step for me": completes the current guide step with sensible sample input.
+  function doStep() {
+    const cur = curStep(); if (!cur) return;
+    S.role = cur.role;
+    const id = S.story, o = story();
+    if (cur.key === 'setup') { S.setupDone = true; render(); }
+    else if (cur.key === 'book') { const f = S.newOrder || (S.newOrder = newOrderDraft()); f.date = '2026-11-14'; f.ret = '2026-11-15'; saveOrder(); }
+    else if (cur.key === 'check') { S.release[id] = { ticks: Object.fromEntries(lineKeys(o).map(k => [k, true])), cond: S.release[id]?.cond || {} }; submitCheck(id, ''); }
+    else if (cur.key === 'approve') approveOrder(id);
+    else if (cur.key === 'handover') signOrder(id, cust(o.cust).contact, 'Customer', null);
+    else if (cur.key === 'return') {
+      const r = S.ret[id] || (S.ret[id] = { back: {}, dmg: {}, rep: {}, unit: {}, scanned: {} });
+      const i = o.lines.findIndex(l => !l.units);
+      if (i >= 0 && r.back['L' + i] === undefined) r.back['L' + i] = o.lines[i].qty - 2;
+      finishReturn(id);
+    }
   }
 
   function finishReturn(id) {
@@ -1024,7 +1168,7 @@
       });
   }
 
-  window.addEventListener('hashchange', () => { render(); window.scrollTo(0, 0); });
+  window.addEventListener('hashchange', () => { S.navOpen = false; render(); window.scrollTo(0, 0); });
   seedRelease();
   render();
 })();

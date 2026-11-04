@@ -352,6 +352,21 @@ label.f { display: block; font-size: 12px; font-weight: 700; color: var(--ink-2)
 .explore-grid .seen .tick-sm { background: var(--ok); border-color: var(--ok); color: #fff; }
 .tick-sm svg { width: 13px; }
 
+.scanner { position: relative; background: #101621; border-radius: 12px; aspect-ratio: 4 / 3; overflow: hidden; display: grid; place-items: center; }
+.scanner video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.scanner video[hidden], .scan-frame[hidden], .scan-idle[hidden] { display: none; }
+.scan-frame { position: absolute; left: 50%; top: 50%; width: 56%; aspect-ratio: 1; transform: translate(-50%, -50%); border: 3px solid rgba(255, 255, 255, .9); border-radius: 14px; box-shadow: 0 0 0 999px rgba(0, 0, 0, .28); pointer-events: none; }
+.scan-idle { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 20px; text-align: center; color: #cfd8e8; }
+.scan-idle > svg { width: 34px; }
+.scan-idle small { font-size: 12px; max-width: 280px; }
+.scan-hit { display: grid; gap: 12px; border: 1px solid var(--line); border-radius: 10px; padding: 14px; justify-items: start; }
+.scan-hit small { display: block; color: var(--ink-3); }
+.qr-samples { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.qr-sample { border: 1px solid var(--line); border-radius: 8px; padding: 10px; text-align: center; font-size: 11.5px; min-width: 0; }
+.qr-sample b { display: block; margin-top: 6px; line-height: 1.25; }
+.qr-sample .mono { display: block; color: var(--ink-3); font-size: 10.5px; overflow-wrap: anywhere; }
+.qr svg, .qr-sample svg { display: block; width: 100%; height: auto; }
+
 .menu-btn, .nav-backdrop { display: none; }
 
 @media (max-width: 1100px) { .g4 { grid-template-columns: 1fr 1fr; } .g-main, .g3 { grid-template-columns: 1fr; } }
@@ -381,6 +396,8 @@ label.f { display: block; font-size: 12px; font-weight: 700; color: var(--ink-2)
   .head .actions { width: 100%; }
   .g2, .g3, .g-main, .choice { grid-template-columns: 1fr; }
   .explore-grid { grid-template-columns: 1fr; }
+  .qr-samples { grid-template-columns: 1fr 1fr; }
+  .scan-phone-link { display: none; }
   .g4 { grid-template-columns: 1fr 1fr; gap: 10px; }
   .kpi { padding: 12px; } .kpi .v { font-size: 23px; }
   /* Tables scroll inside their card rather than widening the page */

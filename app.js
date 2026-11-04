@@ -242,6 +242,63 @@
     return `<svg viewBox="0 0 25 25" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><path d="${r}" fill="#111"/></svg>`;
   }
 
+  // ---------- real QR scanning ----------
+  // Labels hold a link, so any phone camera opens the item, and the scanner reads the code from it.
+  const qrUrl = code => `${location.origin}${location.pathname}#/s/${code}`;
+  const parseCode = text => decodeURIComponent(String(text).trim().split('/s/').pop().replace(/^WIMS:/i, '')).toUpperCase();
+  const lookupCode = code => {
+    const parent = D.items.find(i => (i.units || []).some(u => u.code === code));
+    if (parent) return { it: parent, unit: parent.units.find(u => u.code === code) };
+    const it = item(code); return it ? { it } : null;
+  };
+  let scanner = null;
+  let jsQRLoading = null;
+  const loadJsQR = () => jsQRLoading || (jsQRLoading = new Promise((ok, no) => {
+    const t = document.createElement('script'); t.src = 'vendor/jsQR.min.js'; t.onload = ok; t.onerror = () => { jsQRLoading = null; no(new Error('load')); }; document.head.appendChild(t);
+  }));
+  function stopScanner() { if (!scanner) return; scanner.stream?.getTracks().forEach(t => t.stop()); scanner = null; }
+  const scanErrorText = e => (e.name === 'NotAllowedError' ? 'The camera is blocked. Allow camera access for this site in your browser settings, then try again.'
+    : e.name === 'NotFoundError' ? 'No camera was found on this device. Open this page on a phone, or type a code below.'
+    : !navigator.mediaDevices ? 'This browser can\'t open the camera here. Use the phone\'s normal camera on a label, or type a code below.'
+    : 'The camera couldn\'t start. Close other apps using it and try again, or type a code below.');
+  async function startScanner(video, onCode, onError) {
+    stopScanner();
+    try {
+      await loadJsQR();
+      if (!navigator.mediaDevices) throw new Error('unavailable');
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } }, audio: false });
+      const me_ = scanner = { stream, last: '', lastAt: 0 };
+      video.srcObject = stream; video.setAttribute('playsinline', ''); video.muted = true; await video.play();
+      const canvas = document.createElement('canvas'), ctx = canvas.getContext('2d', { willReadFrequently: true });
+      const tick = () => {
+        if (scanner !== me_) return;
+        if (!video.isConnected) { stopScanner(); return; }   // the page or dialog holding the camera has gone
+        if (video.videoWidth) {
+          const k = Math.min(1, 800 / video.videoWidth);
+          canvas.width = video.videoWidth * k; canvas.height = video.videoHeight * k;
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const hit = window.jsQR(ctx.getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height, { inversionAttempts: 'dontInvert' });
+          if (hit && hit.data) {
+            const code = parseCode(hit.data), t = Date.now();
+            if (code !== me_.last || t - me_.lastAt > 3000) { me_.last = code; me_.lastAt = t; navigator.vibrate?.(80); onCode(code); }
+          }
+        }
+        setTimeout(tick, 180);
+      };
+      tick();
+    } catch (e) { stopScanner(); onError(scanErrorText(e)); }
+  }
+  const scanResult = code => {
+    const hit = lookupCode(code);
+    if (!hit) return note(`<b>${esc(code)}</b> isn't an item in this demo. Items you added only exist in the browser where you added them.`, 'warn');
+    const { it, unit: u } = hit, o = u && unitOrder(u.code), r = u && unitReserved(u.code), s = stats(it);
+    return `<div class="scan-hit"><div class="cell-item">${thumb(it)}<div><b>${esc(it.name)}</b><small class="mono">${esc(code)}</small></div></div>
+      ${u ? `<dl class="dl"><dt>Condition</dt><dd>${condPill(u.cond)}</dd><dt>Warehouse</dt><dd>${esc(wh(u.wh).name)}</dd><dt>Where now</dt><dd>${o ? `Out on <a href="#/order/${o.id}">${o.id}</a>` : r ? `Reserved for <a href="#/order/${r.id}">${r.id}</a>` : 'In the warehouse'}</dd></dl>`
+        : `<dl class="dl"><dt>Available</dt><dd>${n(s.avail)} of ${n(s.total)} pieces</dd><dt>Out now</dt><dd>${n(s.out)}</dd><dt>Damaged or for repair</dt><dd>${n(s.dmg + s.rep)}</dd></dl>`}
+      <a class="btn sm" href="#/item/${it.sku}${u ? '/' + u.code : ''}">Open the full item page</a></div>`;
+  };
+  const SAMPLE_LABELS = ['CHR-TIF-WHT', 'TBL-5FT-RND', 'LIN-TBL-WHT', 'TBL-6FT-RCT', 'TNT-1020-007', 'SND-SPK-15-001'];
+
   // ---------- guided setup wizard ----------
   const story = () => (S.story ? order(S.story) : null);
   const firstName = r => ME[r].name.split(' ')[0];
@@ -253,7 +310,7 @@
       summary: 'Reserve items for a date, with a double-booking check.', task: () => 'The Nov 8 weekend is already busy, so 450 chairs won\'t fit. <b>Pick a date that fits</b>, then click <b>Save order</b>.',
       doneText: 'The order is booked and its stock is held for those dates.' },
     { key: 'check', label: 'Check', role: 'staff', route: () => `#/release/${S.story}?as=staff`, review: () => `#/order/${S.story}?as=staff`, done: () => !!story() && story().status !== 'Preparing',
-      summary: 'Count every line and record its condition.', task: () => `${story()?.sentBack ? `${esc(story().sentBack.by)} sent this back. ` : ''}<b>Tick every line</b> or tap <b>Scan next item</b>, then click <b>${S.rolesOn ? 'Submit for supervisor approval' : 'Mark ready for pickup'}</b>.`,
+      summary: 'Count every line and record its condition.', task: () => `${story()?.sentBack ? `${esc(story().sentBack.by)} sent this back. ` : ''}<b>Tick every line</b> or use <b>Scan with camera</b>, then click <b>${S.rolesOn ? 'Submit for supervisor approval' : 'Mark ready for pickup'}</b>.`,
       get doneText() { return S.rolesOn ? 'The checklist went to the supervisor.' : 'The order is ready for pickup.'; } },
     { key: 'approve', label: 'Approve', role: 'supervisor', route: () => `#/approve/${S.story}?as=supervisor`, review: () => `#/order/${S.story}?as=supervisor`, done: () => !!story()?.approval,
       summary: 'The supervisor approves it or sends it back.', task: () => 'Review what Maria counted, then click <b>Approve</b>, or try <b>Send back</b> with a reason.',
@@ -309,6 +366,7 @@
           ${navItem('#/calendar', 'calendar', 'cal', 'Availability')}
           ${navItem('#/adjustments', 'adjustments', 'adj', 'Adjustments')}
           ${navItem('#/labels', 'labels', 'qr', 'QR labels')}
+          ${navItem('#/scan', 'scan', 'cam', 'Scan')}
           <div class="nav-group">Orders</div>
           ${navItem('#/orders', 'orders', 'clip', 'Orders')}
           ${S.rolesOn ? navItem('#/approvals', 'approvals', 'check', approver ? 'Approvals' : 'My submissions', approver && pendingAll ? `<span class="count">${pendingAll}</span>` : '') : ''}
@@ -349,7 +407,7 @@
     const greet = `Good morning, ${me().name.split(' ')[0]}`;
     const scope = S.role === 'admin' ? 'All 4 warehouses' : 'Pasig Main and Las Piñas (your assigned warehouses)';
     const waiting = orders.filter(o => o.status === 'For Approval' && canApprove(o));
-    return head(greet, `${scope} · Wednesday, Nov 4, 2026`, `<a class="btn" href="#/phone">${ic('cam')}Scan</a><a class="btn primary" href="#/orders/new">${ic('plus')}New order</a>`) + `
+    return head(greet, `${scope} · Wednesday, Nov 4, 2026`, `<a class="btn" href="#/scan">${ic('cam')}Scan</a><a class="btn primary" href="#/orders/new">${ic('plus')}New order</a>`) + `
       ${(!S.guide || !curStep()) && !S.exploreHidden ? `<div class="card explore no-print"><div class="card-h"><div><h3>Things to try</h3><span class="sub">${exploreSeen()} of ${exploreList().length} seen. Everything here is sample data, so go ahead and change it.</span></div><button class="btn sm" data-act="hide-explore">Dismiss</button></div><div class="explore-grid">${exploreList().map(e => `<a href="${e[0]}" class="${S.seen[seenKey(e[0])] ? 'seen' : ''}"><span class="tick-sm">${S.seen[seenKey(e[0])] ? ic('check') : ''}</span><span><b>${e[1]}</b><small>${e[2]}</small></span></a>`).join('')}</div></div>` : ''}
       <div class="grid g4">
         ${kpi('Total stock', n(total), 'pieces across all conditions', 'box')}
@@ -427,7 +485,7 @@
             return `<tr class="click ${u.code === sel ? 'flag' : ''}" data-go="#/item/${sku}/${u.code}"><td class="mono"><b>${u.code}</b></td><td>${wh(u.wh).name}</td><td>${condPill(u.cond)}</td><td>${o ? `Out on <a href="#/order/${o.id}">${o.id}</a>` : r ? `Reserved for <a href="#/order/${r.id}">${r.id}</a>` : 'In warehouse'}</td></tr>`; }).join('')}
           </table></div>
         <div class="card"><div class="card-h"><h3>History of <span class="mono">${sel}</span></h3></div>
-          <div class="card-b" style="display:flex;gap:16px;align-items:flex-start"><div style="width:84px;flex-shrink:0">${qrSvg('WIMS:' + sel)}</div><div style="font-size:12.5px;color:var(--ink-2)">Scan this code on the unit's label to open it here, or to tick it off on a checklist.</div></div>
+          <div class="card-b" style="display:flex;gap:16px;align-items:flex-start"><div style="width:84px;flex-shrink:0">${qrSvg(qrUrl(sel))}</div><div style="font-size:12.5px;color:var(--ink-2)">Scan this code with a phone camera to open this unit, or to tick it off on a checklist.</div></div>
           <ul class="feed">${hist.map(h => `<li><span class="dot ${h.tone || ''}"></span><div>${esc(h.text)}<small>${h.date}</small></div></li>`).join('')}</ul></div>
       </div>`;
     }
@@ -565,7 +623,7 @@
       <div class="w-actions"><button class="btn primary" data-act="start-guide">${S.setupDone ? 'Continue the guide' : 'Start the guide'} ${ic('arrow')}</button><button class="btn" data-act="skip-guide">Explore on my own</button></div>
     </div></main>`;
 
-  const EXPLORE = [['#/inventory?as=admin', 'Add your own item', 'Inventory → Add item, then book it on an order'], ['#/orders/new', 'Try to double-book', 'Book the same chairs on a busy date'], ['#/calendar', 'Availability calendar', 'What is free each day, per warehouse'], ['#/item/TNT-1020/TNT-1020-007', 'Per-unit history', 'Every event and damage report for one tent'], ['#/labels', 'QR labels', 'Print stickers; the codes really scan'], ['#/phone', 'On the phone', 'Scanning, and signing for items'], ['#/approvals?as=supervisor', 'Approvals', 'What the supervisor sees'], ['#/reports?as=admin', 'Reports', 'Stock, discrepancies, damage per item'], ['#/settings?as=admin&tab=package', 'See the add-ons', 'Switch on delivery, or roles and approvals']];
+  const EXPLORE = [['#/inventory?as=admin', 'Add your own item', 'Inventory → Add item, then book it on an order'], ['#/orders/new', 'Try to double-book', 'Book the same chairs on a busy date'], ['#/calendar', 'Availability calendar', 'What is free each day, per warehouse'], ['#/item/TNT-1020/TNT-1020-007', 'Per-unit history', 'Every event and damage report for one tent'], ['#/scan', 'Scan a real QR code', 'Use your phone camera on a sample label'], ['#/labels', 'QR labels', 'Print stickers for items and units'], ['#/phone', 'On the phone', 'Scanning, and signing for items'], ['#/approvals?as=supervisor', 'Approvals', 'What the supervisor sees'], ['#/reports?as=admin', 'Reports', 'Stock, discrepancies, damage per item'], ['#/settings?as=admin&tab=package', 'See the add-ons', 'Switch on delivery, or roles and approvals']];
   const seenKey = h => h.replace(/[?&]as=\w+/, '');
   const exploreList = () => EXPLORE.filter(e => S.rolesOn || !e[0].startsWith('#/approvals'));
   const exploreSeen = () => exploreList().filter(e => S.seen[seenKey(e[0])]).length;
@@ -651,7 +709,7 @@
         ${l.units.map(u => `<div class="check-row unit ${r.ticks[u] ? 'done' : ''}" id="row-${u}">${tick(u)}<div class="lab"><b class="mono">${u}</b></div><div>1 unit</div>${condSel(u)}</div>`).join('')}</div>`;
     }).join('');
     const isPickup = o.type === 'pickup';
-    return head('Checklist', `${o.id} · ${esc(o.event)} · ${typeTag(o)} · from ${wh(o.wh).name}`, `<button class="btn" data-act="scan" data-id="${id}">${ic('cam')}Scan next item</button>`, `<a href="#/orders">Orders</a> / <a href="#/order/${id}">${o.id}</a> / Release`) + `
+    return head('Checklist', `${o.id} · ${esc(o.event)} · ${typeTag(o)} · from ${wh(o.wh).name}`, `<button class="btn primary" data-act="scan-check" data-id="${id}">${ic('cam')}Scan with camera</button><button class="btn" data-act="scan" data-id="${id}">Simulate a scan</button>`, `<a href="#/orders">Orders</a> / <a href="#/order/${id}">${o.id}</a> / Release`) + `
       <div class="grid g-main">
         <div class="card"><div class="card-h"><h3>Count every line and record its condition</h3><span class="sub">${done} of ${keys.length} checked</span></div>${rows}</div>
         <div class="stack"><div class="card"><div class="card-b">
@@ -937,12 +995,34 @@
     const it = item(sku), fmt = S.labelFmt || 'a4';
     let codes = it.track === 'unit' ? it.units.map(u => u.code) : Array(21).fill(it.sku);
     codes = codes.slice(0, 21);
-    const lab = code => `<div class="label"><div class="qr">${qrSvg('WIMS:' + code)}</div><div><b>${esc(it.name)}</b><span class="mono">${code}</span><small>${esc(S.company)}</small></div></div>`;
+    const lab = code => `<div class="label"><div class="qr">${qrSvg(qrUrl(code))}</div><div><b>${esc(it.name)}</b><span class="mono">${code}</span><small>${esc(S.company)}</small></div></div>`;
     return `<div class="no-print">${head('QR labels', 'Print stickers for items and units. Phone cameras read QR codes quickly, even on small labels.', `<button class="btn primary" data-act="print">${ic('print')}Print</button>`)}
       <div class="filters"><select class="in" data-label="sku">${D.items.map(x => `<option value="${x.sku}" ${x.sku === sku ? 'selected' : ''}>${esc(x.name)}${x.track === 'unit' ? ` (${x.units.length} units)` : ''}</option>`).join('')}</select>
       <select class="in" data-label="fmt"><option value="a4" ${fmt === 'a4' ? 'selected' : ''}>A4 sticker paper, 21 per sheet (any printer)</option><option value="thermal" ${fmt === 'thermal' ? 'selected' : ''}>Thermal label printer, 50×30mm</option></select></div>
       <div style="margin-bottom:16px">${note(it.track === 'unit' ? `Each unit gets its own code, so a scan opens that exact unit. For outdoor items like tents, use <b>waterproof vinyl</b> sticker paper.` : 'Count-tracked items share one code per SKU. Stick it on the item or on the shelf bin.')}</div></div>
       ${fmt === 'a4' ? `<div class="sheet">${codes.map(lab).join('')}</div>` : `<div style="display:flex;flex-wrap:wrap;gap:14px;justify-content:center">${codes.slice(0, 8).map(c => `<div style="width:250px;height:150px;background:#fff;box-shadow:var(--shadow);border-radius:6px;padding:10px">${lab(c).replace('class="label"', 'class="label" style="border:0;height:100%"')}</div>`).join('')}</div>`}`;
+  };
+
+  pages.scan = () => head('Scan a QR code', 'This scanner is real. It uses your phone\'s camera in the browser, with no app to install.') + `
+    <div class="grid g2">
+      <div class="stack"><div class="card"><div class="card-h"><h3>Camera</h3></div><div class="card-b">
+        <div class="scanner" id="scan-box"><video id="scan-video" playsinline muted hidden></video><div class="scan-frame" id="scan-frame" hidden></div>
+          <div class="scan-idle" id="scan-idle">${ic('cam')}<button class="btn primary" data-act="scan-start">Start camera</button><small>Your browser will ask for permission. Nothing is recorded or sent anywhere.</small></div></div>
+        <div id="scan-msg" style="margin-top:12px"></div>
+        <div id="scan-result" style="margin-top:12px"></div>
+        <label class="f" for="scan-typed" style="margin-top:14px">Or type a code</label>
+        <div style="display:flex;gap:8px"><input class="in" id="scan-typed" placeholder="e.g. TNT-1020-007"><button class="btn" data-act="scan-typed">Look up</button></div>
+      </div></div></div>
+      <div class="stack"><div class="card"><div class="card-h"><h3>Sample labels to scan</h3></div><div class="card-b">
+        <p style="margin:0 0 12px;font-size:13px;color:var(--ink-2)">Show these on one screen and scan with your phone, or print them from <a href="#/labels">QR labels</a>. You can also point your phone's normal camera at one: it opens that item directly.</p>
+        <div class="qr-samples">${SAMPLE_LABELS.map(code => { const h = lookupCode(code); return `<div class="qr-sample"><div class="qr">${qrSvg(qrUrl(code))}</div><b>${esc(h.it.name)}</b><span class="mono">${code}</span></div>`; }).join('')}</div>
+      </div></div>
+      <div class="card scan-phone-link"><div class="card-b" style="display:flex;gap:14px;align-items:center"><div style="width:96px;flex-shrink:0">${qrSvg(`${location.origin}${location.pathname}#/scan`)}</div><div style="font-size:13px"><b>On a computer?</b><br>Scan this with your phone to open this page there, then scan the samples on this screen.</div></div></div></div>
+    </div>`;
+
+  pages.s = code => {
+    const c = parseCode(code || '');
+    return head('Scanned label', 'This opened from the QR code, using the phone\'s normal camera.', '', '') + `<div style="max-width:560px"><div class="card"><div class="card-b">${scanResult(c)}</div></div><p><a class="btn primary" href="#/scan">${ic('cam')}Scan another</a></p></div>`;
   };
 
   pages.phone = () => {
@@ -951,7 +1031,7 @@
     const pList = [...o.lines.flatMap(l => l.units ? l.units.map(u => ({ k: u, label: item(l.sku).name, code: u })) : [{ k: 'L' + l.sku, label: item(l.sku).name, code: `${l.sku} × ${l.qty}` }])];
     const doneCount = pList.filter(x => pr[x.k]).length;
     const signed = !!o2.clearance;
-    return head('On the phone', 'Staff open WIMS in the phone\'s browser. No app to install, works on Android and iPhone.') + `
+    return head('On the phone', 'Staff open WIMS in the phone\'s browser. No app to install, works on Android and iPhone. These two screens are a preview.', `<a class="btn primary" href="#/scan">${ic('cam')}Try a real scan</a>`) + `
       <div class="phones">
         <div class="phone-wrap"><div class="phone"><div class="screen">
           <div class="p-status"><span>9:41</span><span>●●● 5G</span></div>
@@ -993,11 +1073,11 @@
     if (key === 'orders' && parts[1] === 'new') key = 'orders/new';
     if (S.role !== 'admin' && ADMIN_ONLY.includes(key)) html = head('Admin only', `${me().role} accounts cannot open this page. Switch to Admin at the top to see it.`);
     else if (key === 'item') html = pages.item(parts[1], parts[2]);
-    else if (['order', 'release', 'sign', 'clearance', 'return', 'approve'].includes(key)) html = pages[key](parts[1]);
+    else if (['order', 'release', 'sign', 'clearance', 'return', 'approve', 's'].includes(key)) html = pages[key](parts[1]);
     else if (key === 'damage') html = pages.damage(parts[1]);
     else if (key === 'labels') html = pages.labels(params);
     else html = (pages[key] || notFound)();
-    const navKey = { approve: 'approvals', item: 'inventory', order: 'orders', 'orders/new': 'orders', release: 'orders', sign: 'orders', clearance: 'orders', return: 'orders', notifications: '' }[key] ?? key;
+    const navKey = { s: 'scan', approve: 'approvals', item: 'inventory', order: 'orders', 'orders/new': 'orders', release: 'orders', sign: 'orders', clearance: 'orders', return: 'orders', notifications: '' }[key] ?? key;
     app.innerHTML = key === 'welcome' ? html : shell(navKey, raw, html);
     mount(key);
   }
@@ -1061,6 +1141,9 @@
     else if (act === 'clear-q') { S.q = ''; render(); }
     else if (act === 'add-item') addItem();
     else if (act === 'status') { const o = order(routeId()); o.status = a.dataset.to; render(); toast(`${o.id} is now ${o.status}`); }
+    else if (act === 'scan-start') startPageScan();
+    else if (act === 'scan-typed') { const c = parseCode(document.getElementById('scan-typed').value); if (c) document.getElementById('scan-result').innerHTML = scanResult(c); }
+    else if (act === 'scan-check') scanForChecklist(id);
     else if (act === 'scan') {
       const o = order(id), r = S.release[id]; const keys = []; o.lines.forEach((l, i) => l.units ? l.units.forEach(u => keys.push(u)) : keys.push('L' + i));
       const k = keys.find(x => !r.ticks[x]); if (!k) { toast('Everything is already checked'); return; }
@@ -1137,6 +1220,26 @@
     if (e.target.id === 'q' && e.key === 'Enter') { S.q = e.target.value.trim(); const u = allUnits().find(x => x.code.toLowerCase() === S.q.toLowerCase()); const o = order(S.q.toUpperCase());
       if (o) { S.q = ''; location.hash = '#/order/' + o.id; } else if (u) { const it = D.items.find(i => (i.units || []).includes(u)); S.q = ''; location.hash = `#/item/${it.sku}/${u.code}`; } else if (location.hash === '#/inventory') render(); else location.hash = '#/inventory'; }
   });
+
+  function startPageScan() {
+    const video = document.getElementById('scan-video'), msg = document.getElementById('scan-msg');
+    msg.innerHTML = '';
+    startScanner(video, code => { const box = document.getElementById('scan-result'); if (box) box.innerHTML = scanResult(code); }, text => { msg.innerHTML = note(text, 'warn'); document.getElementById('scan-idle').hidden = false; video.hidden = true; document.getElementById('scan-frame').hidden = true; });
+    document.getElementById('scan-idle').hidden = true; video.hidden = false; document.getElementById('scan-frame').hidden = false;
+  }
+  function scanForChecklist(id) {
+    const o = order(id);
+    modal('Scan items on this order', `<div class="scanner"><video id="chk-video" playsinline muted></video><div class="scan-frame"></div></div><div id="chk-msg" style="margin-top:12px">${note('Point the camera at a label. Matching lines get ticked on the checklist.')}</div>`, `<button class="btn" data-close>Done</button>`, m => {
+      const msg = m.querySelector('#chk-msg');
+      startScanner(m.querySelector('#chk-video'), code => {
+        const i = o.lines.findIndex(l => l.sku === code), unitLine = o.lines.some(l => (l.units || []).includes(code)), key = unitLine ? code : i >= 0 && !o.lines[i].units ? 'L' + i : null;
+        if (!key) { msg.innerHTML = note(`<b>${esc(code)}</b> is not on ${o.id}.${lookupCode(code)?.it.track === 'unit' ? ' This item needs its own unit label.' : ''}`, 'bad'); return; }
+        S.release[id].ticks[key] = true; keepScroll(() => {});
+        const it = item(unitLine ? o.lines.find(l => (l.units || []).includes(code)).sku : code);
+        msg.innerHTML = note(`<b>${esc(it.name)}</b> ticked. ${lineKeys(o).filter(k => !S.release[id].ticks[k]).length} left.`, 'ok');
+      }, text => { msg.innerHTML = note(text, 'warn'); });
+    });
+  }
 
   function saveOrder() {
     const f = S.newOrder, id = 'ORD-' + S.nextOrder++, from = toDate(f.date), to = toDate(f.ret), custKey = 'c' + id;
@@ -1352,7 +1455,7 @@
   window.addEventListener('pagehide', saveState);
   document.addEventListener('visibilitychange', () => { if (document.hidden) saveState(); });
 
-  window.addEventListener('hashchange', () => { S.navOpen = false; render(); window.scrollTo(0, 0); });
+  window.addEventListener('hashchange', () => { stopScanner(); S.navOpen = false; render(); window.scrollTo(0, 0); });
   if (!loadState()) { setDelivery(false); seedRelease(); setRoles(false); }
   render();
 })();

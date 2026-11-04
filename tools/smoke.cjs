@@ -130,24 +130,45 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  
   await h.go('#/sign/ORD-1045?as=staff'); check('customer cannot sign before approval', (await page.locator('#sig').count()) === 0);
   await h.go('#/approve/ORD-1045?as=staff'); check('staff cannot approve', (await page.locator('[data-act="approve-order"]').count()) === 0);
   await h.go('#/approve/ORD-1042?as=supervisor'); await page.click('[data-act="approve-order"]'); await page.waitForTimeout(150);
-  await page.click('[data-act="dispatch"]'); await page.waitForTimeout(150);
-  check('delivery dispatches', (await h.sub()).includes('In Transit'));
-  await h.go('#/sign/ORD-1042?as=supervisor'); await h.sign('#sig'); await page.click('#sig-ok'); await page.waitForTimeout(150);
-  await h.go('#/order/ORD-1042'); check('receiver signing marks Delivered', (await h.sub()).includes('Delivered'));
+  check('approved pickup is ready for pickup', (await h.sub()).includes('Ready for Pickup'));
   await h.go('#/return/ORD-1037?as=admin'); await page.selectOption('[data-unit="TNT-1020-013"]', 'damaged'); await page.waitForTimeout(80);
   await page.click('[data-act="finish-return"]'); await page.waitForTimeout(150);
   check('return files a report', (await h.sub()).includes('discrepancy'));
   await h.go('#/phone'); await page.click('button[data-act="phone-scan"]'); await page.waitForTimeout(80); await h.sign('#p-sig'); await page.click('#p-sig-ok'); await page.waitForTimeout(120);
-  check('phone signing works', (await page.textContent('.phones')).includes('Signed and delivered'));
+  check('phone signing works at the counter', (await page.textContent('.phones')).includes('Clearance saved on ORD-1039'));
   await h.go('#/dashboard?as=staff'); check('staff menu hides admin pages', !(await page.locator('.nav').textContent()).includes('Settings'));
   await h.go('#/reports'); check('staff blocked from reports', (await page.textContent('h1')).includes('Admin only'));
+  await page.context().close();
+
+  // ---- Package A is pickup only; delivery is an add-on
+  page = await open(); h = helpers(page);
+  await page.goto(BASE + '#/orders/new?as=admin'); await page.waitForTimeout(150);
+  check('Package A form has no delivery option', (await page.locator('input[value="delivery"]').count()) === 0);
+  await h.go('#/orders'); const ordersA = await page.textContent('.page');
+  check('Package A lists no delivery orders', !ordersA.includes('TechCon') && (await page.locator('.tag.delivery').count()) === 0 && (await page.locator('[data-tab="delivery"]').count()) === 0);
+  await h.go('#/order/ORD-1041'); check('delivery orders are hidden in Package A', (await page.textContent('h1')).includes('Not found'));
+  await h.go('#/reports'); await page.click('[data-rtab="deliveries"]'); await page.waitForTimeout(80);
+  check('reports use order wording in Package A', (await page.locator('[data-rtab="deliveries"]').textContent()).includes('Orders'));
+  await h.go('#/settings?as=admin&tab=package'); await page.screenshot({ path: OUT + 'settings_package.png', fullPage: true });
+  await page.click('[data-act="toggle-delivery"]'); await page.waitForTimeout(100);
+  await h.go('#/order/ORD-1041'); check('add-on brings delivery orders back', (await page.textContent('h1')).includes('TechCon'));
+  await h.go('#/sign/ORD-1041?as=admin'); await h.sign('#sig'); await page.click('#sig-ok'); await page.waitForTimeout(150);
+  await h.go('#/order/ORD-1041'); check('receiver signing marks Delivered', (await h.sub()).includes('Delivered'));
+  await h.go('#/orders/new'); check('add-on adds the delivery option', (await page.locator('input[value="delivery"]').count()) === 1);
+  await page.click('[data-act="save-order"]'); await page.waitForTimeout(150); const dId = page.url().match(/ORD-\d+/)[0];
+  await h.go(`#/release/${dId}`); const dt = await page.locator('[data-tick]').count(); for (let i = 0; i < dt; i++) { await page.locator('[data-tick]').nth(i).click(); await page.waitForTimeout(40); }
+  await page.click('[data-act="submit-check"]'); await page.waitForTimeout(120); await h.go(`#/approve/${dId}?as=supervisor`); await page.click('[data-act="approve-order"]'); await page.waitForTimeout(120);
+  await page.click('[data-act="dispatch"]'); await page.waitForTimeout(120);
+  check('delivery dispatches with the add-on', (await h.sub()).includes('In Transit'));
+  await h.go('#/settings?as=admin&tab=package'); await page.click('[data-act="toggle-delivery"]'); await page.waitForTimeout(80);
+  await h.go('#/orders'); check('switching off hides them again', (await page.locator('.tag.delivery').count()) === 0);
   await page.context().close();
 
   // ---- Free exploring
   page = await open(); h = helpers(page); page.on('dialog', d => d.accept());
   await page.goto(BASE); await page.click('[data-act="skip-guide"]'); await page.waitForTimeout(150);
   check('explore lands on the dashboard with no guide', (await page.locator('.guide').count()) === 0 && page.url().includes('dashboard'));
-  check('dashboard shows things to try', (await page.locator('.explore-grid a').count()) === 9);
+  check('dashboard shows things to try', (await page.locator('.explore-grid a').count()) === 10);
   await page.screenshot({ path: OUT + 'explore_dashboard.png', fullPage: true });
   await h.go('#/categories'); await page.click('[data-act="add-category"]'); await page.click('#c-save');
   check('category form requires a name', (await page.textContent('.form-err')).includes('Enter'));
@@ -172,7 +193,7 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  
   check('Escape closes a form', (await page.locator('.modal').count()) === 0);
   await h.go('#/approvals?as=admin'); const before = await page.locator('[data-act="approve"]').count(); await page.locator('[data-act="approve"]').first().click(); await page.waitForTimeout(100);
   check('approving an adjustment clears it', (await page.locator('[data-act="approve"]').count()) === before - 1);
-  await h.go('#/settings'); await page.click('[data-act="add-user"]'); await page.fill('#u-name', 'Ana Reyes'); await page.click('#u-save'); check('user needs a warehouse', (await page.textContent('.form-err')).includes('warehouse'));
+  await h.go('#/settings?as=admin&tab=users'); await page.click('[data-act="add-user"]'); await page.fill('#u-name', 'Ana Reyes'); await page.click('#u-save'); check('user needs a warehouse', (await page.textContent('.form-err')).includes('warehouse'));
   await page.locator('.check-list input').first().check(); await page.click('#u-save'); await page.waitForTimeout(100);
   check('new user is listed', (await page.textContent('.page')).includes('Ana Reyes'));
   await h.go('#/damage/DMG-0089'); await page.click('[data-to="Charged to customer"]'); await page.waitForTimeout(80);
@@ -199,7 +220,7 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  
   await page.context().close();
 
   // ---- Every page, on desktop and at phone width
-  const routes = ['#/welcome', '#/setup?as=admin', '#/dashboard?as=admin', '#/orders', '#/orders/new', '#/calendar', '#/order/ORD-1045', '#/release/ORD-1045?as=staff', '#/approvals?as=supervisor', '#/approve/ORD-1042?as=supervisor', '#/order/ORD-1039', '#/sign/ORD-1039?as=staff', '#/clearance/ORD-1040?as=admin', '#/return/ORD-1037', '#/order/ORD-1036', '#/damage', '#/damage/DMG-0092', '#/damage/DMG-0089', '#/item/TNT-1020/TNT-1020-007', '#/item/CHR-TIF-WHT', '#/inventory', '#/labels', '#/phone', '#/adjustments', '#/reports', '#/settings', '#/warehouses', '#/categories', '#/notifications', '#/done'];
+  const routes = ['#/welcome', '#/setup?as=admin', '#/dashboard?as=admin', '#/orders', '#/orders/new', '#/calendar', '#/order/ORD-1045', '#/release/ORD-1045?as=staff', '#/approvals?as=supervisor', '#/approve/ORD-1042?as=supervisor', '#/order/ORD-1039', '#/sign/ORD-1039?as=staff', '#/clearance/ORD-1038?as=admin', '#/return/ORD-1037', '#/order/ORD-1036', '#/damage', '#/damage/DMG-0092', '#/damage/DMG-0089', '#/item/TNT-1020/TNT-1020-007', '#/item/CHR-TIF-WHT', '#/inventory', '#/labels', '#/phone', '#/adjustments', '#/reports', '#/settings', '#/warehouses', '#/categories', '#/notifications', '#/done'];
   page = await open(); h = helpers(page); await page.goto(BASE); let blank = [];
   for (const r of routes) { await h.go(r); if (!(await page.locator('h1').count())) blank.push(r); }
   check('all pages render on desktop', !blank.length, blank.join(' '));

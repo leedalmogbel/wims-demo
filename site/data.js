@@ -80,7 +80,7 @@ window.WIMS_DATA = (() => {
     { id: 'ORD-1045', type: 'pickup', event: 'Navarro Christening', venue: 'Customer pickup at Pasig Main', wh: 'PSG', cust: 'navarro',
       date: 'Nov 7, 2026', returnDate: 'Nov 8, 2026', status: 'Preparing',
       lines: [{ sku: 'CHR-TIF-WHT', qty: 60 }, { sku: 'TBL-5FT-RND', qty: 6 }, { sku: 'LIN-TBL-WHT', qty: 6 }] },
-    { id: 'ORD-1042', type: 'delivery', event: 'Santos Wedding', venue: 'Taal Vista, Tagaytay', wh: 'PSG', cust: 'santos',
+    { id: 'ORD-1042', type: 'pickup', event: 'Santos Wedding', venue: 'Customer pickup at Pasig Main', wh: 'PSG', cust: 'santos',
       date: 'Nov 8, 2026', returnDate: 'Nov 9, 2026', status: 'For Approval',
       check: { by: 'Maria Santos', at: 'Nov 4, 2026 · 8:40 AM', note: 'One round table has a scratched top. Noted on the checklist; still usable.', cond: { L1: 'minor' } },
       lines: [{ sku: 'CHR-TIF-WHT', qty: 150 }, { sku: 'TBL-5FT-RND', qty: 15 }, { sku: 'LIN-TBL-WHT', qty: 15 }, { sku: 'LIN-SSH-GLD', qty: 150 }, { sku: 'TNT-1020', units: ['TNT-1020-009', 'TNT-1020-010'] }] },
@@ -99,14 +99,14 @@ window.WIMS_DATA = (() => {
       date: 'Nov 2, 2026', returnDate: 'Nov 4, 2026', status: 'Picked Up',
       lines: [{ sku: 'LGT-FRY-10M', qty: 12 }, { sku: 'SND-SPK-15', units: ['SND-SPK-15-006', 'SND-SPK-15-007'] }],
       clearance: { by: 'Grace Lim', role: 'Customer', at: 'Nov 2, 2026 · 10:05 AM', where: 'Taguig warehouse' } },
-    { id: 'ORD-1037', type: 'delivery', event: 'Garcia Holdings Year-End Party', venue: 'Marriott Grand Ballroom, Pasay', wh: 'PSG', cust: 'garcia',
-      date: 'Nov 1, 2026', returnDate: 'Nov 3, 2026', status: 'Returning',
+    { id: 'ORD-1037', type: 'pickup', event: 'Garcia Holdings Year-End Party', venue: 'Customer pickup at Pasig Main', wh: 'PSG', cust: 'garcia',
+      date: 'Nov 1, 2026', returnDate: 'Nov 3, 2026', status: 'Picked Up',
       lines: [{ sku: 'CHR-TIF-WHT', qty: 200 }, { sku: 'TBL-6FT-RCT', qty: 20 }, { sku: 'LIN-TBL-WHT', qty: 20 }, { sku: 'TNT-1020', units: ['TNT-1020-012', 'TNT-1020-013'] }],
-      clearance: { by: 'Paolo Garcia', role: 'Client representative', at: 'Nov 1, 2026 · 9:40 AM', where: 'Marriott Grand Ballroom' } },
-    { id: 'ORD-1036', type: 'delivery', event: 'Aquino Wedding', venue: 'Casa Ibarra, Taguig', wh: 'LPS', cust: 'aquino',
+      clearance: { by: 'Paolo Garcia', role: 'Customer', at: 'Nov 1, 2026 · 9:40 AM', where: 'Pasig Main warehouse' } },
+    { id: 'ORD-1036', type: 'pickup', event: 'Aquino Wedding', venue: 'Customer pickup at Las Piñas', wh: 'LPS', cust: 'aquino',
       date: 'Oct 25, 2026', returnDate: 'Oct 27, 2026', status: 'Returned', discrepancy: true,
       lines: [{ sku: 'CHR-TIF-WHT', qty: 200, back: 198, dmg: 2 }, { sku: 'TBL-5FT-RND', qty: 20, back: 20, dmg: 0 }, { sku: 'TNT-1020', units: ['TNT-1020-006', 'TNT-1020-007'], unitBack: { 'TNT-1020-006': 'good', 'TNT-1020-007': 'repair' } }],
-      clearance: { by: 'Bea Aquino', role: 'Client representative', at: 'Oct 25, 2026 · 8:30 AM', where: 'Casa Ibarra' } },
+      clearance: { by: 'Bea Aquino', role: 'Customer', at: 'Oct 25, 2026 · 8:30 AM', where: 'Las Piñas warehouse' } },
   ];
   // Units currently out on orders.
   for (const o of orders) {
@@ -145,11 +145,13 @@ window.WIMS_DATA = (() => {
 
   const notifications = [
     { tone: 'warn', text: 'Low stock: 6ft Rectangular Table at Pasig Main (8 available, alert at 12)', when: '2h ago', link: '#/item/TBL-6FT-RCT' },
-    { tone: 'info', text: 'ORD-1041 TechCon 2026 is In Transit to SMX Convention Center', when: '3h ago', link: '#/order/ORD-1041' },
+    { tone: 'info', text: 'ORD-1039 Torres Family Reunion is ready for pickup', when: '3h ago', link: '#/order/ORD-1039' },
+    { tone: 'info', text: 'ORD-1041 TechCon 2026 is In Transit to SMX Convention Center', when: '3h ago', link: '#/order/ORD-1041', deliveryOnly: true },
     { tone: 'bad', text: 'Return discrepancy on ORD-1036: 2 chairs missing, 1 tent damaged', when: 'Oct 27', link: '#/order/ORD-1036' },
     { tone: 'warn', text: 'ORD-1042 Santos Wedding checklist submitted by Maria Santos, waiting for supervisor approval', when: '1h ago', link: '#/approve/ORD-1042' },
     { tone: 'info', text: '2 stock adjustments from Maria Santos are waiting for approval', when: 'Yesterday', link: '#/approvals' },
-    { tone: 'ok', text: 'ORD-1040 Reyes Debut delivered, clearance signed by Carla Reyes', when: 'Yesterday', link: '#/order/ORD-1040' },
+    { tone: 'ok', text: 'ORD-1040 Reyes Debut delivered, clearance signed by Carla Reyes', when: 'Yesterday', link: '#/order/ORD-1040', deliveryOnly: true },
+    { tone: 'ok', text: 'ORD-1038 Lim 7th Birthday picked up, clearance signed by Grace Lim', when: 'Nov 2', link: '#/order/ORD-1038' },
   ];
 
   const users = [

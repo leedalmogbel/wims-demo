@@ -11,6 +11,7 @@
     role: 'admin',
     guide: false,
     deliveryOn: false,
+    rolesOn: false,
     story: null,
     setupDone: false,
     company: 'Sample Events Rental Co.',
@@ -39,7 +40,20 @@
     D.hiddenOrders = on ? [] : all.filter(o => o.type === 'delivery');
     S.newOrder = null; S.orderTab = 'all';
   }
-  const notifications = () => D.notifications.filter(x => S.deliveryOn || !x.deliveryOnly);
+  // Package A has one level of access. Roles and approvals only exist with the add-on,
+  // so orders waiting on a supervisor skip straight to ready while it is off.
+  function setRoles(on) {
+    S.rolesOn = on; S.role = 'admin'; S.newOrder = null;
+    for (const o of [...D.orders, ...(D.hiddenOrders || [])]) {
+      const ready = o.type === 'pickup' ? 'Ready for Pickup' : 'Ready to Dispatch';
+      if (!on && o.status === 'For Approval') { o.status = ready; o.heldForApproval = true; }
+      else if (on && o.heldForApproval && o.status === ready) { o.status = 'For Approval'; o.heldForApproval = false; }
+    }
+  }
+  const notifications = () => D.notifications.filter(x => (S.deliveryOn || !x.deliveryOnly) && (S.rolesOn || !x.rolesOnly));
+  const MAX_USERS = 3;
+  const accounts = () => (S.rolesOn ? D.users : D.users.filter(u => u.active && u.role !== 'Supervisor'));
+  const adjustments = () => D.adjustments.filter(a => S.rolesOn || a.status !== 'Pending approval');
 
   // ---------- helpers ----------
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -239,10 +253,10 @@
       summary: 'Reserve items for a date, with a double-booking check.', task: () => 'The Nov 8 weekend is already busy, so 450 chairs won\'t fit. <b>Pick a date that fits</b>, then click <b>Save order</b>.',
       doneText: 'The order is booked and its stock is held for those dates.' },
     { key: 'check', label: 'Check', role: 'staff', route: () => `#/release/${S.story}?as=staff`, review: () => `#/order/${S.story}?as=staff`, done: () => !!story() && story().status !== 'Preparing',
-      summary: 'Staff count every line and submit it.', task: () => `${story()?.sentBack ? `${esc(story().sentBack.by)} sent this back. ` : ''}<b>Tick every line</b> or tap <b>Scan next item</b>, then click <b>Submit for supervisor approval</b>.`,
-      doneText: 'The checklist went to the supervisor.' },
+      summary: 'Count every line and record its condition.', task: () => `${story()?.sentBack ? `${esc(story().sentBack.by)} sent this back. ` : ''}<b>Tick every line</b> or tap <b>Scan next item</b>, then click <b>${S.rolesOn ? 'Submit for supervisor approval' : 'Mark ready for pickup'}</b>.`,
+      get doneText() { return S.rolesOn ? 'The checklist went to the supervisor.' : 'The order is ready for pickup.'; } },
     { key: 'approve', label: 'Approve', role: 'supervisor', route: () => `#/approve/${S.story}?as=supervisor`, review: () => `#/order/${S.story}?as=supervisor`, done: () => !!story()?.approval,
-      summary: 'The supervisor approves it or sends it back.', task: () => 'Review what Maria counted, then click <b>Approve</b>, or try <b>Send back</b> with a reason. Supervisor approval is an optional add-on.',
+      summary: 'The supervisor approves it or sends it back.', task: () => 'Review what Maria counted, then click <b>Approve</b>, or try <b>Send back</b> with a reason.',
       doneText: 'The supervisor approved it.' },
     { key: 'handover', label: 'Hand over', role: 'staff', route: () => `#/sign/${S.story}?as=staff`, review: () => `#/clearance/${S.story}?as=staff`, done: () => !!story()?.clearance,
       summary: 'The customer signs for exactly what they received.', task: () => 'The customer is at the counter. <b>Draw a signature</b>, then click <b>Confirm and sign</b>.',
@@ -251,25 +265,27 @@
       summary: 'Compare what came back and flag any damage.', task: () => 'Lower the <b>Returned</b> count or change a condition to see the flags, then click <b>Complete return</b>.',
       doneText: 'The return is complete.' },
   ];
-  const curStep = () => STEPS.find(x => !x.done());
+  const steps = () => STEPS.filter(x => S.rolesOn || x.key !== 'approve');
+  const curStep = () => steps().find(x => !x.done());
+  const stepRole = x => (S.rolesOn ? x.role : 'admin');
   function guideBar(route) {
     if (!S.guide) return '';
-    const cur = curStep(), ci = cur ? STEPS.indexOf(cur) : STEPS.length;
-    const chips = STEPS.map((x, i) => {
+    const list = steps(), cur = curStep(), ci = cur ? list.indexOf(cur) : list.length;
+    const chips = list.map((x, i) => {
       const inner = `<span class="n">${i < ci ? ic('check') : i + 1}</span><span class="t">${x.label}</span>`;
-      if (i > ci) return `<span class="chip" aria-disabled="true" title="Finish ${STEPS[ci].label} first">${inner}</span>`;
+      if (i > ci) return `<span class="chip" aria-disabled="true" title="Finish ${list[ci].label} first">${inner}</span>`;
       return `<a class="chip ${i < ci ? 'done' : 'now'}" href="${i < ci ? x.review() : x.route()}" ${i === ci ? 'aria-current="step"' : ''}>${inner}</a>`;
     }).join('');
     let row;
     if (!cur && pathOf(route) === '#/done') row = `<p><b>Guide complete.</b> Everything below is yours to explore.</p>`;
-    else if (!cur) row = `<p><b>All 6 steps are done.</b> See the full record of this order and what else to explore.</p><a class="go" href="#/done">See the summary →</a>`;
+    else if (!cur) row = `<p><b>All ${list.length} steps are done.</b> See the full record of this order and what else to explore.</p><a class="go" href="#/done">See the summary →</a>`;
     else {
-      const here = pathOf(route) === pathOf(cur.route()) && S.role === cur.role;
-      const who = `<span class="who">${firstName(cur.role)} · ${ME[cur.role].role}</span>`;
+      const here = pathOf(route) === pathOf(cur.route()) && S.role === stepRole(cur);
+      const who = S.rolesOn ? `<span class="who">${firstName(cur.role)} · ${ME[cur.role].role}</span>` : '';
       if (here) row = `${who}<p>${cur.task()}</p><button class="ghost" data-act="do-step">Do this step for me</button>`;
-      else row = `<p>${ci > 0 ? `<b>${ic('check')}${STEPS[ci - 1].doneText}</b> ` : ''}Next, ${firstName(cur.role)} (${ME[cur.role].role}): ${cur.summary}</p><a class="go" href="${cur.route()}">Continue to ${cur.label} →</a>`;
+      else row = `<p>${ci > 0 ? `<b>${ic('check')}${list[ci - 1].doneText}</b> ` : ''}Next${S.rolesOn ? `, ${firstName(cur.role)} (${ME[cur.role].role})` : ''}: ${cur.summary}</p><a class="go" href="${cur.route()}">Continue to ${cur.label} →</a>`;
     }
-    return `<div class="guide no-print"><div class="guide-top"><span class="count">Step ${Math.min(ci + 1, 6)} of 6</span><nav class="chips" aria-label="Guide progress">${chips}</nav><button class="hide" data-act="hide-guide">Exit guide</button></div><div class="guide-row">${row}</div></div>`;
+    return `<div class="guide no-print"><div class="guide-top"><span class="count">Step ${Math.min(ci + 1, list.length)} of ${list.length}</span><nav class="chips" aria-label="Guide progress">${chips}</nav><button class="hide" data-act="hide-guide">Exit guide</button></div><div class="guide-row">${row}</div></div>`;
   }
 
   // ---------- shell ----------
@@ -295,7 +311,7 @@
           ${navItem('#/labels', 'labels', 'qr', 'QR labels')}
           <div class="nav-group">Orders</div>
           ${navItem('#/orders', 'orders', 'clip', 'Orders')}
-          ${navItem('#/approvals', 'approvals', 'check', approver ? 'Approvals' : 'My submissions', approver && pendingAll ? `<span class="count">${pendingAll}</span>` : '')}
+          ${S.rolesOn ? navItem('#/approvals', 'approvals', 'check', approver ? 'Approvals' : 'My submissions', approver && pendingAll ? `<span class="count">${pendingAll}</span>` : '') : ''}
           ${navItem('#/damage', 'damage', 'wrench', 'Damage & loss')}
           ${navItem('#/phone', 'phone', 'phone', 'On the phone')}
           ${admin ? `<div class="nav-group">Admin</div>${navItem('#/reports', 'reports', 'chart', 'Reports')}${navItem('#/settings', 'settings', 'gear', 'Settings')}` : ''}
@@ -307,9 +323,9 @@
           <button class="menu-btn" data-act="toggle-nav" aria-label="Menu">${ic('menu')}</button>
           <div class="search">${ic('search')}<input id="q" placeholder="Search items, SKUs, unit codes, orders…" value="${esc(S.q)}"></div>
           <div class="spacer"></div>
-          <div class="role-switch" title="Switch role to compare views">${['admin', 'supervisor', 'staff'].map(r => `<button class="${S.role === r ? 'on' : ''}" data-role="${r}">${ME[r].role}</button>`).join('')}</div>
+          ${S.rolesOn ? `<div class="role-switch" title="Switch role to compare views">${['admin', 'supervisor', 'staff'].map(r => `<button class="${S.role === r ? 'on' : ''}" data-role="${r}">${ME[r].role}</button>`).join('')}</div>` : ''}
           <a class="bell" href="#/notifications">${ic('bell')}<i>${unread}</i></a>
-          <div class="me"><div class="avatar">${me().name.split(' ').map(x => x[0]).join('')}</div><div><b>${me().name}</b><small>${me().scope}</small></div></div>
+          <div class="me"><div class="avatar">${me().name.split(' ').map(x => x[0]).join('')}</div><div><b>${me().name}</b><small>${S.rolesOn ? me().scope : 'Full access'}</small></div></div>
         </header>
         ${guideBar(route)}
         <div class="page">${body}</div>
@@ -328,13 +344,13 @@
     const active = orders.filter(o => o.status !== 'Returned');
     const deliveries = active.filter(o => o.type === 'delivery').length;
     const low = lowStock(whs);
-    const pending = D.adjustments.filter(a => a.status === 'Pending approval');
+    const pending = adjustments().filter(a => a.status === 'Pending approval');
     const disc = orders.filter(o => o.discrepancy);
     const greet = `Good morning, ${me().name.split(' ')[0]}`;
     const scope = S.role === 'admin' ? 'All 4 warehouses' : 'Pasig Main and Las Piñas (your assigned warehouses)';
     const waiting = orders.filter(o => o.status === 'For Approval' && canApprove(o));
     return head(greet, `${scope} · Wednesday, Nov 4, 2026`, `<a class="btn" href="#/phone">${ic('cam')}Scan</a><a class="btn primary" href="#/orders/new">${ic('plus')}New order</a>`) + `
-      ${(!S.guide || !curStep()) && !S.exploreHidden ? `<div class="card explore no-print"><div class="card-h"><div><h3>Things to try</h3><span class="sub">${exploreSeen()} of ${EXPLORE.length} seen. Everything here is sample data, so go ahead and change it.</span></div><button class="btn sm" data-act="hide-explore">Dismiss</button></div><div class="explore-grid">${EXPLORE.map(e => `<a href="${e[0]}" class="${S.seen[seenKey(e[0])] ? 'seen' : ''}"><span class="tick-sm">${S.seen[seenKey(e[0])] ? ic('check') : ''}</span><span><b>${e[1]}</b><small>${e[2]}</small></span></a>`).join('')}</div></div>` : ''}
+      ${(!S.guide || !curStep()) && !S.exploreHidden ? `<div class="card explore no-print"><div class="card-h"><div><h3>Things to try</h3><span class="sub">${exploreSeen()} of ${exploreList().length} seen. Everything here is sample data, so go ahead and change it.</span></div><button class="btn sm" data-act="hide-explore">Dismiss</button></div><div class="explore-grid">${exploreList().map(e => `<a href="${e[0]}" class="${S.seen[seenKey(e[0])] ? 'seen' : ''}"><span class="tick-sm">${S.seen[seenKey(e[0])] ? ic('check') : ''}</span><span><b>${e[1]}</b><small>${e[2]}</small></span></a>`).join('')}</div></div>` : ''}
       <div class="grid g4">
         ${kpi('Total stock', n(total), 'pieces across all conditions', 'box')}
         ${kpi('Active orders', active.length, S.deliveryOn ? `${deliveries} deliveries · ${active.length - deliveries} pickups` : `${active.length} customer pickups`, 'clip')}
@@ -532,7 +548,7 @@
           <div class="card"><div class="card-h"><h3>1. Company</h3></div><div class="card-b"><div class="field" style="margin:0"><label class="f">Company name (printed on clearances and labels)</label><input class="in" data-company value="${esc(S.company)}"></div></div></div>
           <div class="card"><div class="card-h"><h3>2. Warehouses</h3><span class="sub">${D.warehouses.length} of 5 included</span></div><ul class="feed">${D.warehouses.map(w => `<li><span class="dot ok"></span><div><b>${w.name}</b><small>${esc(w.address)}</small></div></li>`).join('')}</ul></div>
           <div class="card"><div class="card-h"><h3>3. Items and stock</h3><span class="pill ok">Imported</span></div><div class="card-b" style="font-size:13.5px">${note(`<b>${D.items.length} items</b> imported from your Excel file, with stock for each warehouse. Tents, sound gear and LED lights are tracked per unit; the rest by count.`, 'ok')}</div></div>
-          <div class="card"><div class="card-h"><h3>4. Team</h3></div><div class="scroll-x"><table class="tbl"><tr><th>Name</th><th>Role</th><th>Warehouses</th></tr>${D.users.filter(u => u.active).map(u => `<tr><td><b>${u.name}</b></td><td>${u.role}</td><td>${u.wh}</td></tr>`).join('')}</table></div></div>
+          <div class="card"><div class="card-h"><h3>4. Team</h3>${S.rolesOn ? '' : `<span class="sub">${accounts().length} of ${MAX_USERS} accounts</span>`}</div><div class="scroll-x"><table class="tbl"><tr><th>Name</th><th>Role</th><th>Warehouses</th></tr>${accounts().filter(u => u.active).map(u => `<tr><td><b>${u.name}</b></td><td>${S.rolesOn ? u.role : 'Full access'}</td><td>${S.rolesOn ? u.wh : 'All warehouses'}</td></tr>`).join('')}</table></div></div>
         </div>
         <div class="stack"><div class="card"><div class="card-b">
           <h3 style="margin:0 0 6px;font-size:15px">Ready to start</h3><p style="margin:0 0 14px;color:var(--ink-2);font-size:13.5px">This sample business is already filled in. A real setup uses your own list.</p>
@@ -544,14 +560,15 @@
   pages.welcome = () => `<main class="welcome"><div class="welcome-card">
       <div class="brand"><div class="brand-mark">WI</div><div><b>WIMS</b><small>Warehouse Inventory Management System</small></div></div>
       <h1>See one order go from booking to return</h1>
-      <p class="lead">This is Package A: customers collect items at the warehouse and bring them back. You'll set up a sample rental business, then play each person on the team. It takes a few minutes, and everything here is sample data.</p>
-      <ol class="w-steps">${STEPS.map(x => `<li><span class="n">${STEPS.indexOf(x) + 1}</span><div><b>${x.label}</b><span class="who-sm">${ME[x.role].role}${x.key === 'approve' ? ' · optional add-on' : ''}</span><small>${x.summary}</small></div></li>`).join('')}</ol>
+      <p class="lead">This is Package A: customers collect items at the warehouse and bring them back. You'll set up a sample rental business, then run one order through it. It takes a few minutes, and everything here is sample data.</p>
+      <ol class="w-steps">${steps().map((x, i) => `<li><span class="n">${i + 1}</span><div><b>${x.label}</b>${S.rolesOn ? `<span class="who-sm">${ME[x.role].role}</span>` : ''}<small>${x.summary}</small></div></li>`).join('')}</ol>
       <div class="w-actions"><button class="btn primary" data-act="start-guide">${S.setupDone ? 'Continue the guide' : 'Start the guide'} ${ic('arrow')}</button><button class="btn" data-act="skip-guide">Explore on my own</button></div>
     </div></main>`;
 
-  const EXPLORE = [['#/inventory?as=admin', 'Add your own item', 'Inventory → Add item, then book it on an order'], ['#/orders/new', 'Try to double-book', 'Book the same chairs on a busy date'], ['#/calendar', 'Availability calendar', 'What is free each day, per warehouse'], ['#/item/TNT-1020/TNT-1020-007', 'Per-unit history', 'Every event and damage report for one tent'], ['#/labels', 'QR labels', 'Print stickers; the codes really scan'], ['#/phone', 'On the phone', 'Scanning, and signing for items'], ['#/approvals?as=supervisor', 'Approvals', 'What the supervisor sees'], ['#/reports?as=admin', 'Reports', 'Stock, discrepancies, damage per item'], ['#/settings?as=admin&tab=package', 'See the delivery add-on', 'Package A is pickup only; switch delivery on'], ['#/settings?as=admin&tab=roles', 'Roles and permissions', 'What each role can do']];
+  const EXPLORE = [['#/inventory?as=admin', 'Add your own item', 'Inventory → Add item, then book it on an order'], ['#/orders/new', 'Try to double-book', 'Book the same chairs on a busy date'], ['#/calendar', 'Availability calendar', 'What is free each day, per warehouse'], ['#/item/TNT-1020/TNT-1020-007', 'Per-unit history', 'Every event and damage report for one tent'], ['#/labels', 'QR labels', 'Print stickers; the codes really scan'], ['#/phone', 'On the phone', 'Scanning, and signing for items'], ['#/approvals?as=supervisor', 'Approvals', 'What the supervisor sees'], ['#/reports?as=admin', 'Reports', 'Stock, discrepancies, damage per item'], ['#/settings?as=admin&tab=package', 'See the add-ons', 'Switch on delivery, or roles and approvals']];
   const seenKey = h => h.replace(/[?&]as=\w+/, '');
-  const exploreSeen = () => EXPLORE.filter(e => S.seen[seenKey(e[0])]).length;
+  const exploreList = () => EXPLORE.filter(e => S.rolesOn || !e[0].startsWith('#/approvals'));
+  const exploreSeen = () => exploreList().filter(e => S.seen[seenKey(e[0])]).length;
   pages.done = () => {
     const o = story();
     if (!o || o.status !== 'Returned') return head('Guide summary', 'Finish the guide to see the full record of your order.') + `<a class="btn primary" href="#/welcome">Go to the guide</a>`;
@@ -561,18 +578,18 @@
         <div class="card"><div class="card-h"><h3>The record of this order</h3></div><ul class="feed">
           <li><span class="dot ok"></span><div><b>Booked</b> for ${o.date} to ${o.returnDate}, with stock held for those dates</div></li>
           <li><span class="dot ok"></span><div><b>Checked by ${o.check.by}</b><small>${o.check.at}</small></div></li>
-          <li><span class="dot ok"></span><div><b>Approved by ${o.approval.by}</b><small>${o.approval.at}</small></div></li>
+          ${S.rolesOn && o.approval ? `<li><span class="dot ok"></span><div><b>Approved by ${o.approval.by}</b><small>${o.approval.at}</small></div></li>` : ''}
           <li><span class="dot ok"></span><div><b>Signed for by ${esc(o.clearance.by)}</b> · <a href="#/clearance/${o.id}">view the clearance</a><small>${o.clearance.at}</small></div></li>
           <li><span class="dot ${reports.length ? 'bad' : 'ok'}"></span><div><b>Returned</b> ${reports.length ? `with ${reports.length} report${reports.length > 1 ? 's' : ''} filed` : 'complete, in the same condition'}${reports.length ? `<small>${reports.map(d => `<a href="#/damage/${d.id}">${d.id}</a>`).join(' · ')}</small>` : ''}</div></li>
         </ul></div>
-        <div class="stack"><div class="card"><div class="card-h"><h3>Explore the rest</h3><span class="sub">${exploreSeen()} of ${EXPLORE.length} seen</span></div><ul class="feed">${EXPLORE.map(e => `<li><span class="dot ${S.seen[seenKey(e[0])] ? 'ok' : ''}"></span><div><a href="${e[0]}">${e[1]}</a><small>${e[2]}</small></div></li>`).join('')}</ul></div>
+        <div class="stack"><div class="card"><div class="card-h"><h3>Explore the rest</h3><span class="sub">${exploreSeen()} of ${exploreList().length} seen</span></div><ul class="feed">${exploreList().map(e => `<li><span class="dot ${S.seen[seenKey(e[0])] ? 'ok' : ''}"></span><div><a href="${e[0]}">${e[1]}</a><small>${e[2]}</small></div></li>`).join('')}</ul></div>
         <button class="btn" style="width:100%;justify-content:center" data-act="restart">Start over</button></div>
       </div>`;
   };
 
   pages.order = id => {
     const o = order(id); if (!o) return notFound();
-    const c = cust(o.cust), flow = FLOW[o.type], idx = flow.indexOf(o.status);
+    const c = cust(o.cust), flow = FLOW[o.type].filter(x => S.rolesOn || x !== 'For Approval'), idx = flow.indexOf(o.status);
     const tl = flow.map((st, i) => `<div class="st ${i < idx || o.status === 'Returned' ? 'done' : i === idx ? 'now' : ''}"><div class="b">${i < idx || o.status === 'Returned' ? ic('check') : ''}</div>${st}</div>`).join('');
     const rel = S.release[id];
     let action = '';
@@ -603,11 +620,11 @@
             <dt>Customer</dt><dd>${esc(c.name)}</dd><dt>Contact</dt><dd>${esc(c.contact)} · ${c.phone}</dd>
             <dt>${o.type === 'delivery' ? 'Venue' : 'Pickup at'}</dt><dd>${esc(o.venue)}</dd><dt>Warehouse</dt><dd>${wh(o.wh).name}</dd>
             <dt>${o.type === 'delivery' ? 'Delivery' : 'Pickup'}</dt><dd>${o.date}</dd><dt>Return</dt><dd>${o.returnDate}</dd></dl></div></div>
-          <div class="card"><div class="card-h"><h3>Checklist &amp; approval</h3>${o.approval ? '<span class="pill ok">Approved</span>' : o.status === 'For Approval' ? '<span class="pill warn">For approval</span>' : o.sentBack ? '<span class="pill bad">Sent back</span>' : o.check || o.clearance ? '<span class="pill ok">Done</span>' : '<span class="pill mute">Not started</span>'}</div><ul class="feed">
+          <div class="card"><div class="card-h"><h3>${S.rolesOn ? 'Checklist &amp; approval' : 'Checklist'}</h3>${S.rolesOn && o.approval ? '<span class="pill ok">Approved</span>' : o.status === 'For Approval' ? '<span class="pill warn">For approval</span>' : o.sentBack ? '<span class="pill bad">Sent back</span>' : o.check || o.clearance ? '<span class="pill ok">Done</span>' : '<span class="pill mute">Not started</span>'}</div><ul class="feed">
             ${o.sentBack ? `<li><span class="dot bad"></span><div><b>Sent back by ${o.sentBack.by}</b>: ${esc(o.sentBack.reason)}<small>${o.sentBack.at}</small></div></li>` : ''}
-            ${o.check ? `<li><span class="dot ok"></span><div><b>Checklist by ${o.check.by}</b> (Staff)${o.check.note ? `: “${esc(o.check.note)}”` : ''}<small>${o.check.at}</small></div></li>` : !o.clearance ? `<li><span class="dot"></span><div>Staff count every line and submit the checklist<small>Then ${supervisorOf(o.wh)} (Supervisor) approves it</small></div></li>` : ''}
-            ${o.approval ? `<li><span class="dot ok"></span><div><b>Approved by ${o.approval.by}</b> (${o.approval.role || 'Supervisor'})<small>${o.approval.at}</small></div></li>` : o.status === 'For Approval' ? `<li><span class="dot warn"></span><div>Waiting for <b>${supervisorOf(o.wh)}</b> (Supervisor)<small>Submitted ${o.check.at}</small></div></li>` : ''}
-            ${o.clearance && !o.check ? `<li><span class="dot ok"></span><div>Checked and approved before release<small>${o.clearance.at}</small></div></li>` : ''}
+            ${o.check ? `<li><span class="dot ok"></span><div><b>Checklist by ${o.check.by}</b>${S.rolesOn ? ' (Staff)' : ''}${o.check.note ? `: “${esc(o.check.note)}”` : ''}<small>${o.check.at}</small></div></li>` : !o.clearance ? `<li><span class="dot"></span><div>${S.rolesOn ? `Staff count every line and submit the checklist<small>Then ${supervisorOf(o.wh)} (Supervisor) approves it</small>` : 'Count every line and record its condition'}</div></li>` : ''}
+            ${S.rolesOn && o.approval ? `<li><span class="dot ok"></span><div><b>Approved by ${o.approval.by}</b> (${o.approval.role || 'Supervisor'})<small>${o.approval.at}</small></div></li>` : o.status === 'For Approval' ? `<li><span class="dot warn"></span><div>Waiting for <b>${supervisorOf(o.wh)}</b> (Supervisor)<small>Submitted ${o.check.at}</small></div></li>` : ''}
+            ${o.clearance && !o.check ? `<li><span class="dot ok"></span><div>${S.rolesOn ? 'Checked and approved' : 'Checked'} before release<small>${o.clearance.at}</small></div></li>` : ''}
           </ul></div>
           <div class="card"><div class="card-h"><h3>Clearance</h3>${o.clearance ? '<span class="pill ok">Signed</span>' : '<span class="pill mute">Not signed yet</span>'}</div><div class="card-b">
             ${o.clearance ? `<div class="sig-img">${S.sigs[id] ? `<img src="${S.sigs[id]}">` : scribble(o.clearance.by)}</div><p style="margin:8px 0 12px;font-size:13px"><b>${esc(o.clearance.by)}</b>, ${esc(o.clearance.role)}<br><span style="color:var(--ink-3)">${o.clearance.at} · ${esc(o.clearance.where)}</span></p><a class="btn sm" href="#/clearance/${id}">${ic('eye')}View / print clearance</a>`
@@ -641,10 +658,10 @@
           <div style="display:flex;justify-content:space-between;font-weight:700;margin-bottom:8px"><span>Progress</span><span>${Math.round(done / keys.length * 100)}%</span></div>
           <div class="progress"><div style="width:${done / keys.length * 100}%"></div></div>
           ${o.sentBack ? `<div style="margin-top:16px">${note(`<b>Sent back by ${o.sentBack.by}:</b> ${esc(o.sentBack.reason)}`, 'bad')}</div>` : ''}
-          <div style="margin:16px 0">${all ? note(`All ${keys.length} lines checked. Submit it to <b>${supervisorOf(o.wh)}</b> (Supervisor) for approval.`, 'ok') : note(`<b>Submit is locked</b> until every line is checked. ${keys.length - done} left.`, 'warn')}</div>
-          <div class="field"><label class="f">Note for the supervisor (optional)</label><textarea class="in" rows="2" id="chk-note" placeholder="e.g. 1 table has a scratched top"></textarea></div>
-          <button class="btn primary" style="width:100%;justify-content:center" data-act="submit-check" data-id="${id}" ${all ? '' : 'disabled'}>${ic('arrow')}Submit for supervisor approval</button>
-          <p style="font-size:12px;color:var(--ink-3);margin:12px 0 0">Checked by ${me().name} · ${wh(o.wh).name}. After approval, ${isPickup ? 'the customer signs the clearance at the counter' : 'the order can be dispatched and the receiver signs at the venue'}.</p>
+          <div style="margin:16px 0">${all ? note(S.rolesOn ? `All ${keys.length} lines checked. Submit it to <b>${supervisorOf(o.wh)}</b> (Supervisor) for approval.` : `All ${keys.length} lines checked. The order can go out.`, 'ok') : note(`<b>${S.rolesOn ? 'Submit' : 'Release'} is locked</b> until every line is checked. ${keys.length - done} left.`, 'warn')}</div>
+          <div class="field"><label class="f">${S.rolesOn ? 'Note for the supervisor' : 'Note'} (optional)</label><textarea class="in" rows="2" id="chk-note" placeholder="e.g. 1 table has a scratched top"></textarea></div>
+          <button class="btn primary" style="width:100%;justify-content:center" data-act="submit-check" data-id="${id}" ${all ? '' : 'disabled'}>${ic('arrow')}${S.rolesOn ? 'Submit for supervisor approval' : isPickup ? 'Mark ready for pickup' : 'Mark ready to dispatch'}</button>
+          <p style="font-size:12px;color:var(--ink-3);margin:12px 0 0">Checked by ${me().name} · ${wh(o.wh).name}. ${S.rolesOn ? 'After approval, ' : 'Next, '}${isPickup ? 'the customer signs the clearance at the counter' : 'the order can be dispatched and the receiver signs at the venue'}.</p>
         </div></div></div>
       </div>`;
   };
@@ -702,7 +719,7 @@
         <p style="margin:22px 0;font-size:13.5px;line-height:1.6">I confirm that I received the items listed above, complete and in the condition stated, for <b>${esc(o.event)}</b>. I am responsible for returning them in the same condition by <b>${o.returnDate}</b>. Missing or damaged items may be charged.</p>
         <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:30px;margin-top:30px">
           <div><div class="sig-img">${S.sigs[id] ? `<img src="${S.sigs[id]}">` : scribble(o.clearance.by)}</div><div style="margin-top:6px"><b>${esc(o.clearance.by)}</b><br><small style="color:var(--ink-3)">${esc(o.clearance.role)} · ${o.clearance.at}</small></div></div>
-          <div style="text-align:right;font-size:13px;line-height:1.6"><div><b>Checked by:</b> ${o.check?.by || (o.wh === 'TGG' ? 'Jomar Ramos' : 'Maria Santos')}</div><div><b>Approved by:</b> ${o.approval?.by || (o.wh === 'TGG' || o.wh === 'QC' ? 'Juan Dela Cruz' : 'Rico Bautista')}</div><small style="color:var(--ink-3)">Signed at ${esc(o.clearance.where)}</small></div>
+          <div style="text-align:right;font-size:13px;line-height:1.6"><div><b>Checked by:</b> ${o.check?.by || (o.wh === 'TGG' ? 'Jomar Ramos' : 'Maria Santos')}</div>${S.rolesOn ? `<div><b>Approved by:</b> ${o.approval?.by || (o.wh === 'TGG' || o.wh === 'QC' ? 'Juan Dela Cruz' : 'Rico Bautista')}</div>` : ''}<small style="color:var(--ink-3)">Signed at ${esc(o.clearance.where)}</small></div>
         </div>
       </div>`;
   };
@@ -740,7 +757,7 @@
           ${flags.length ? `<div class="field" style="margin-top:14px"><label class="f">Photos of damage</label><div class="photo" style="aspect-ratio:auto;height:90px;cursor:pointer" data-act="toast" data-msg="Taking photos: available in the full system">${ic('cam', 'style="width:28px"')}<span class="cap">Tap to add photos</span></div></div>
           <div class="field"><label class="f">Notes</label><textarea class="in" rows="2" placeholder="What happened?"></textarea></div>` : ''}
           <button class="btn primary" style="width:100%;justify-content:center;margin-top:14px" data-act="finish-return" data-id="${id}">${ic('check')}Complete return${flags.length ? ' and file reports' : ''}</button>
-          <p style="font-size:12px;color:var(--ink-3);margin:10px 0 0">Good items go back to available stock. Damaged ones move to damaged / for repair. Missing ones go to Admin for review.</p>
+          <p style="font-size:12px;color:var(--ink-3);margin:10px 0 0">Good items go back to available stock. Damaged ones move to damaged / for repair. Missing ones are flagged for review.</p>
         </div></div>
         <div class="card"><div class="card-h"><h3>Clearance on file</h3></div><div class="card-b" style="font-size:13px">${o.clearance ? `Signed by <b>${esc(o.clearance.by)}</b><br><span style="color:var(--ink-3)">${o.clearance.at}</span><br><a href="#/clearance/${id}">View clearance →</a>` : 'None'}</div></div></div>
       </div>`;
@@ -777,6 +794,7 @@
   };
 
   pages.approve = id => {
+    if (!S.rolesOn) return pages.approvals();
     const o = order(id); if (!o) return notFound();
     if (o.status !== 'For Approval') return head('Review checklist', `${o.id} is ${o.status}.`) + `<a class="btn" href="#/order/${id}">Back to order</a>`;
     const r = S.release[id] || { ticks: {}, cond: {} };
@@ -805,6 +823,7 @@
   };
 
   pages.approvals = () => {
+    if (!S.rolesOn) return head('Approvals', 'Part of the Roles and permissions add-on') + note('Package A has one level of access, so nothing waits for approval. Turn on the add-on in Settings to see this page.') + `<p><a class="btn" href="#/settings?as=admin&tab=package">Open Settings</a></p>`;
     const approver = S.role !== 'staff';
     if (!approver) {
       const mine = visibleOrders().filter(o => o.check && o.check.by === me().name || o.sentBack);
@@ -824,12 +843,12 @@
 
   pages.adjustments = () => {
     const admin = S.role !== 'staff';
-    return head('Stock adjustments', admin ? 'Stock-ins, write-offs, transfers and condition updates. Staff write-offs and transfers need your approval.' : 'Record stock-ins and condition changes. Write-offs and transfers go to your supervisor for approval.',
+    return head('Stock adjustments', !S.rolesOn ? 'Stock-ins, write-offs, transfers and condition updates. Every change is logged.' : admin ? 'Stock-ins, write-offs, transfers and condition updates. Staff write-offs and transfers need your approval.' : 'Record stock-ins and condition changes. Write-offs and transfers go to your supervisor for approval.',
       `<button class="btn primary" data-act="new-adj">${ic('plus')}New adjustment</button>`) + `
-      <div class="card"><table class="tbl"><tr><th>Adjustment</th><th>Type</th><th>Item</th><th class="num">Qty</th><th>Warehouse</th><th>By</th><th>Status</th>${admin ? '<th></th>' : ''}</tr>
-      ${D.adjustments.map(a => `<tr><td><b>${a.id}</b><small>${a.date}</small></td><td>${a.type}<small>${esc(a.note)}</small></td><td>${esc(item(a.sku).name)}<small class="mono">${a.sku}</small></td><td class="num">${a.qty}</td><td>${a.wh.split(' → ').map(c => wh(c)?.name || c).join(' → ')}</td><td>${a.by}<small>${a.role}</small></td>
+      <div class="card"><table class="tbl"><tr><th>Adjustment</th><th>Type</th><th>Item</th><th class="num">Qty</th><th>Warehouse</th><th>By</th><th>Status</th>${admin && S.rolesOn ? '<th></th>' : ''}</tr>
+      ${adjustments().map(a => `<tr><td><b>${a.id}</b><small>${a.date}</small></td><td>${a.type}<small>${esc(a.note)}</small></td><td>${esc(item(a.sku).name)}<small class="mono">${a.sku}</small></td><td class="num">${a.qty}</td><td>${a.wh.split(' → ').map(c => wh(c)?.name || c).join(' → ')}</td><td>${a.by}<small>${a.role}</small></td>
         <td>${a.status === 'Pending approval' ? '<span class="pill warn">Pending approval</span>' : a.status === 'Rejected' ? '<span class="pill bad">Rejected</span>' : '<span class="pill ok">Done</span>'}</td>
-        ${admin ? `<td>${a.status === 'Pending approval' ? `<div style="display:flex;gap:6px"><button class="btn sm ok" data-act="approve" data-id="${a.id}">Approve</button><button class="btn sm danger" data-act="reject" data-id="${a.id}">Reject</button></div>` : ''}</td>` : ''}</tr>`).join('')}
+        ${admin && S.rolesOn ? `<td>${a.status === 'Pending approval' ? `<div style="display:flex;gap:6px"><button class="btn sm ok" data-act="approve" data-id="${a.id}">Approve</button><button class="btn sm danger" data-act="reject" data-id="${a.id}">Reject</button></div>` : ''}</td>` : ''}</tr>`).join('')}
       </table></div>`;
   };
 
@@ -889,13 +908,16 @@
       const row = (name, status, tone) => `<tr><td>${name}</td><td><span class="pill ${tone} nodot">${status}</span></td></tr>`;
       body = `<div class="grid g-main"><div class="card"><div class="card-h"><h3>What this demo shows</h3></div><table class="tbl"><tr><th>Feature</th><th>In the proposal</th></tr>
         ${['Inventory, warehouses, categories, adjustments', 'Reservations by date and availability calendar', 'Customer pickup, release checklist, signed clearance', 'Returns, damage records and reports', 'QR labels and phone scanning'].map(x => row(x, 'Package A', 'ok')).join('')}
-        ${row('Delivery orders, status tracking, signing at the venue', 'Add-on: ₱25,000', 'info')}${row('Supervisor role and approvals', 'Add-on: quoted on request', 'info')}${row('Per-unit tracking', 'Add-on: quoted on request', 'info')}${row('Android driver app, GPS and live map', 'Package B, not in this demo', 'mute')}
+        ${row('Delivery orders, status tracking, signing at the venue', 'Add-on: ₱25,000', 'info')}${row('More than 3 user accounts', 'Add-on: quoted on request', 'info')}${row('Roles, permissions and approvals', 'Add-on: quoted on request', 'info')}${row('Per-unit tracking', 'Add-on: quoted on request', 'info')}${row('Android driver app, GPS and live map', 'Package B, not in this demo', 'mute')}
         </table></div>
-        <div class="card"><div class="card-h"><h3>Delivery add-on</h3><span class="pill ${S.deliveryOn ? 'ok' : 'mute'}">${S.deliveryOn ? 'On' : 'Off'}</span></div><div class="card-b"><p style="margin:0 0 14px;font-size:13.5px;color:var(--ink-2)">Package A is pickup only: customers collect items at the warehouse and bring them back. Turn this on to see delivery orders, dispatch and signing at the venue.</p>
-        <button class="btn ${S.deliveryOn ? '' : 'primary'}" style="width:100%;justify-content:center" data-act="toggle-delivery">${S.deliveryOn ? 'Turn off the delivery add-on' : 'Turn on the delivery add-on'}</button></div></div></div>`;
+        <div class="stack"><div class="card"><div class="card-h"><h3>Delivery add-on</h3><span class="pill ${S.deliveryOn ? 'ok' : 'mute'}">${S.deliveryOn ? 'On' : 'Off'}</span></div><div class="card-b"><p style="margin:0 0 14px;font-size:13.5px;color:var(--ink-2)">Package A is pickup only: customers collect items at the warehouse and bring them back. Turn this on to see delivery orders, dispatch and signing at the venue.</p>
+        <button class="btn ${S.deliveryOn ? '' : 'primary'}" style="width:100%;justify-content:center" data-act="toggle-delivery">${S.deliveryOn ? 'Turn off the delivery add-on' : 'Turn on the delivery add-on'}</button></div></div>
+        <div class="card"><div class="card-h"><h3>Roles add-on</h3><span class="pill ${S.rolesOn ? 'ok' : 'mute'}">${S.rolesOn ? 'On' : 'Off'}</span></div><div class="card-b"><p style="margin:0 0 14px;font-size:13.5px;color:var(--ink-2)">Package A has up to ${MAX_USERS} accounts with the same full access. Turn this on to see separate Admin, Supervisor and Staff views, with approvals before release.</p>
+        <button class="btn ${S.rolesOn ? '' : 'primary'}" style="width:100%;justify-content:center" data-act="toggle-roles">${S.rolesOn ? 'Turn off the roles add-on' : 'Turn on the roles add-on'}</button></div></div></div></div>`;
     }
-    else if (tab === 'users') body = `<div class="card"><div class="card-h"><h3>Users</h3><button class="btn sm primary" data-act="add-user">${ic('plus')}Add user</button></div><table class="tbl"><tr><th>Name</th><th>Role</th><th>Warehouses</th><th>Status</th></tr>
-      ${D.users.map(u => `<tr><td><div class="cell-item"><div class="avatar">${u.name.split(' ').map(x => x[0]).join('')}</div><div><b>${u.name}</b><small style="color:var(--ink-3)">${u.email}</small></div></div></td><td>${u.role}</td><td>${u.wh}</td><td>${u.active ? '<span class="pill ok">Active</span>' : '<span class="pill mute">Inactive</span>'}</td></tr>`).join('')}</table></div>`;
+    else if (tab === 'users') body = `<div class="card"><div class="card-h"><div><h3>Users</h3>${S.rolesOn ? '' : `<span class="sub">${accounts().length} of ${MAX_USERS} accounts included in Package A</span>`}</div><button class="btn sm primary" data-act="add-user">${ic('plus')}Add user</button></div><table class="tbl"><tr><th>Name</th><th>${S.rolesOn ? 'Role' : 'Access'}</th><th>Warehouses</th><th>Status</th></tr>
+      ${accounts().map(u => `<tr><td><div class="cell-item"><div class="avatar">${esc(u.name).split(' ').map(x => x[0]).join('')}</div><div><b>${esc(u.name)}</b><small style="color:var(--ink-3)">${esc(u.email)}</small></div></div></td><td>${S.rolesOn ? u.role : 'Full access'}</td><td>${S.rolesOn ? esc(u.wh) : 'All warehouses'}</td><td>${u.active ? '<span class="pill ok">Active</span>' : '<span class="pill mute">Inactive</span>'}</td></tr>`).join('')}</table></div>`;
+    else if (tab === 'roles' && !S.rolesOn) body = `<div style="max-width:640px">${note('Package A has one level of access: every account can do everything. Separate Admin, Supervisor and Staff access is an optional add-on, and you can turn it on in the Package tab.')}</div>`;
     else if (tab === 'roles') {
       const rows = [['View dashboard and inventory', 1, 1, 1], ['Create orders and do the checklist', 1, 1, 1], ['Approve checklists before release', 1, 'own', 0], ['Customer clearance', 1, 1, 1], ['Process returns and file damage reports', 1, 1, 1], ['Stock-ins and condition updates', 1, 1, 1], ['Write-offs and transfers', 1, 1, 'approval'], ['Approve stock adjustments', 1, 'own', 0], ['Charge customers for damage', 1, 0, 0], ['Warehouses, categories, reports', 1, 0, 0], ['Users and settings', 1, 0, 0]];
       const cell = v => v === 1 ? `<span style="color:var(--ok)">${ic('check', 'style="width:18px"')}</span>` : v === 'approval' ? '<span class="pill warn nodot">Needs approval</span>' : v === 'own' ? '<span class="pill info nodot">Own warehouses</span>' : '<span style="color:var(--ink-3)">-</span>';
@@ -963,7 +985,7 @@
     const raw = location.hash || '#/welcome';
     const [path, qs] = raw.slice(2).split('?');
     const params = new URLSearchParams(qs || '');
-    if (ME[params.get('as')]) S.role = params.get('as');
+    if (S.rolesOn && ME[params.get('as')]) S.role = params.get('as');
     const parts = path.split('/');
     let key = parts[0] || 'welcome', html;
     S.seen[seenKey(raw)] = true;
@@ -1022,6 +1044,7 @@
     else if (act === 'start-guide') { S.guide = true; S.newOrder = null; navTo(curStep() ? curStep().route() : '#/done'); }
     else if (act === 'skip-guide') { S.guide = false; navTo('#/dashboard?as=admin'); }
     else if (act === 'restart') resetDemo();
+    else if (act === 'toggle-roles') { setRoles(!S.rolesOn); location.hash === '#/settings?as=admin&tab=package' ? render() : navTo('#/settings?as=admin&tab=package'); toast(S.rolesOn ? 'Roles add-on is on. Switch roles at the top.' : 'Back to Package A: one level of access'); }
     else if (act === 'toggle-delivery') { setDelivery(!S.deliveryOn); render(); toast(S.deliveryOn ? 'Delivery add-on is on' : 'Back to Package A: pickup only'); }
     else if (act === 'hide-explore') { S.exploreHidden = true; render(); }
     else if (act === 'add-warehouse') addWarehouse();
@@ -1127,7 +1150,9 @@
   function submitCheck(id, note_) {
     const o = order(id), r = S.release[id];
     o.check = { by: me().name, at: now(), note: note_, cond: { ...r.cond } };
-    o.status = 'For Approval'; o.sentBack = null;
+    o.sentBack = null;
+    if (!S.rolesOn) { o.status = o.type === 'pickup' ? 'Ready for Pickup' : 'Ready to Dispatch'; navTo('#/order/' + id); toast(`Checklist done. ${o.id} is ${o.status}.`); return; }
+    o.status = 'For Approval';
     D.notifications.unshift({ tone: 'warn', text: `${o.id} ${o.event} checklist submitted by ${me().name}, waiting for approval`, when: 'Just now', link: '#/approve/' + id });
     navTo('#/order/' + id); toast(`Submitted. ${supervisorOf(o.wh)} (Supervisor) has been notified.`);
   }
@@ -1150,7 +1175,7 @@
   // "Do this step for me": completes the current guide step with sensible sample input.
   function doStep() {
     const cur = curStep(); if (!cur) return;
-    S.role = cur.role;
+    S.role = stepRole(cur);
     const id = S.story, o = story();
     if (cur.key === 'setup') { S.setupDone = true; render(); }
     else if (cur.key === 'book') { const f = S.newOrder || (S.newOrder = newOrderDraft()); f.date = '2026-11-14'; f.ret = '2026-11-15'; saveOrder(); }
@@ -1172,12 +1197,12 @@
       if (l.units) {
         l.unitBack = {};
         l.units.forEach(u => { const c = r.unit[u] || 'good'; l.unitBack[u] = c; if (c !== 'missing') unit(u).cond = c;
-          if (c !== 'good') { issues++; D.damage.unshift({ id: 'DMG-00' + S.nextDmg++, sku: l.sku, unit: u, order: id, cust: o.cust, before: 'good', after: c, note: 'Filed from return.', date: 'Nov 4, 2026', by: me().name, status: c === 'missing' ? 'Awaiting Admin review' : 'Open', charge: 0 }); } });
+          if (c !== 'good') { issues++; D.damage.unshift({ id: 'DMG-00' + S.nextDmg++, sku: l.sku, unit: u, order: id, cust: o.cust, before: 'good', after: c, note: 'Filed from return.', date: 'Nov 4, 2026', by: me().name, status: c === 'missing' ? 'Awaiting review' : 'Open', charge: 0 }); } });
       } else {
         const k = 'L' + i, back = r.back[k] ?? l.qty, dmg = r.dmg[k] ?? 0, rep = r.rep[k] ?? 0, miss = Math.max(0, l.qty - back);
         Object.assign(l, { back, dmg, rep });
         const s = it.stock[o.wh]; s[0] += Math.max(0, back - dmg - rep); s[1] += dmg; s[2] += rep;
-        const file = (q, after) => { issues++; D.damage.unshift({ id: 'DMG-00' + S.nextDmg++, sku: l.sku, unit: null, qty: q, order: id, cust: o.cust, before: 'good', after, note: 'Filed from return.', date: 'Nov 4, 2026', by: me().name, status: after === 'missing' ? 'Awaiting Admin review' : 'Open', charge: 0 }); };
+        const file = (q, after) => { issues++; D.damage.unshift({ id: 'DMG-00' + S.nextDmg++, sku: l.sku, unit: null, qty: q, order: id, cust: o.cust, before: 'good', after, note: 'Filed from return.', date: 'Nov 4, 2026', by: me().name, status: after === 'missing' ? 'Awaiting review' : 'Open', charge: 0 }); };
         if (dmg) file(dmg, 'damaged'); if (rep) file(rep, 'repair'); if (miss) file(miss, 'missing');
       }
     });
@@ -1295,13 +1320,17 @@
       });
   }
   function addUser() {
+    if (!S.rolesOn && accounts().length >= MAX_USERS) {
+      modal('Account limit reached', note(`Package A includes up to ${MAX_USERS} user accounts. More accounts are an optional add-on, quoted on request.`), `<button class="btn" data-close>Close</button>`);
+      return;
+    }
     modal('Add user', `
       <div class="grid g2" style="gap:12px"><div class="field"><label class="f">Full name</label><input class="in" id="u-name"></div><div class="field"><label class="f">Email</label><input class="in" id="u-email" type="email"></div></div>
-      <div class="field"><label class="f">Role</label><select class="in" id="u-role"><option>Staff</option><option>Supervisor</option><option>Admin</option></select></div>
-      <div class="field"><label class="f">Warehouses</label><div class="check-list">${D.warehouses.map(w => `<label><input type="checkbox" value="${esc(w.name)}"> ${esc(w.name)}</label>`).join('')}</div></div>${ERR}`,
+      ${S.rolesOn ? `<div class="field"><label class="f">Role</label><select class="in" id="u-role"><option>Staff</option><option>Supervisor</option><option>Admin</option></select></div>
+      <div class="field"><label class="f">Warehouses</label><div class="check-list">${D.warehouses.map(w => `<label><input type="checkbox" value="${esc(w.name)}"> ${esc(w.name)}</label>`).join('')}</div></div>` : ''}${ERR}`,
       `<button class="btn" data-close>Cancel</button><button class="btn primary" id="u-save">Add user</button>`, (m, close) => {
         m.querySelector('#u-save').onclick = () => {
-          const name = m.querySelector('#u-name').value.trim(), role = m.querySelector('#u-role').value, whs = [...m.querySelectorAll('.check-list input:checked')].map(x => x.value);
+          const name = m.querySelector('#u-name').value.trim(), role = m.querySelector('#u-role')?.value || 'Admin', whs = [...m.querySelectorAll('.check-list input:checked')].map(x => x.value);
           if (!name) return formError(m, 'Enter the full name.');
           if (role !== 'Admin' && !whs.length) return formError(m, 'Choose at least one warehouse.');
           D.users.push({ name, email: m.querySelector('#u-email').value.trim() || '-', role, wh: role === 'Admin' ? 'All warehouses' : whs.join(', '), active: true });
@@ -1311,7 +1340,7 @@
   }
 
   // ---------- saved in this browser ----------
-  const SAVE_KEY = 'wims-demo-v2';
+  const SAVE_KEY = 'wims-demo-v3';
   let saving = true;
   const saveState = () => { if (!saving) return; try { const { navOpen, ...keep } = S; localStorage.setItem(SAVE_KEY, JSON.stringify({ D, S: keep })); } catch (e) { /* private mode or full: the demo still works, it just won't survive a reload */ } };
   const loadState = () => { try { const st = JSON.parse(localStorage.getItem(SAVE_KEY)); if (!st) return false; Object.assign(D, st.D); Object.assign(S, st.S); return true; } catch (e) { return false; } };
@@ -1324,6 +1353,6 @@
   document.addEventListener('visibilitychange', () => { if (document.hidden) saveState(); });
 
   window.addEventListener('hashchange', () => { S.navOpen = false; render(); window.scrollTo(0, 0); });
-  if (!loadState()) { setDelivery(false); seedRelease(); }
+  if (!loadState()) { setDelivery(false); seedRelease(); setRoles(false); }
   render();
 })();

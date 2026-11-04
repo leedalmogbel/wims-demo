@@ -24,13 +24,16 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  
       for (let i = 0; i < 30; i++) await page.mouse.move(b.x + 20 + i * 7, b.y + 50 + Math.sin(i) * 20); await page.mouse.up(); },
     cont: async () => { await page.click('.guide .go'); await page.waitForTimeout(150); },
     count: async () => (await page.textContent('.guide .count')).trim(),
+    roles: async () => { await page.evaluate(() => { location.hash = '#/settings?as=admin&tab=package'; }); await page.waitForTimeout(120); await page.click('[data-act="toggle-roles"]'); await page.waitForTimeout(120); },
   });
 
   // ---- Guide by hand, one order start to finish
   let page = await open(); let h = helpers(page);
   await page.goto(BASE); await page.waitForTimeout(200);
   check('first visit opens the welcome screen', (await page.textContent('h1')).includes('booking to return'));
-  check('welcome lists 6 steps', (await page.locator('.w-steps li').count()) === 6);
+  check('Package A welcome lists 5 steps, no Approve', (await page.locator('.w-steps li').count()) === 5 && !(await page.textContent('.w-steps')).includes('Approve'));
+  await h.roles(); await h.go('#/welcome');
+  check('roles add-on brings back 6 steps', (await page.locator('.w-steps li').count()) === 6);
   await page.screenshot({ path: OUT + 'welcome.png', fullPage: true });
   await page.click('[data-act="start-guide"]'); await page.waitForTimeout(150);
   check('guide starts on Set up', (await h.count()) === 'Step 1 of 6' && page.url().includes('/setup'));
@@ -84,8 +87,32 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  
   // ---- Guide with "Do this step for me"
   page = await open(); h = helpers(page);
   await page.goto(BASE); await page.click('[data-act="start-guide"]'); await page.waitForTimeout(100);
-  for (let i = 0; i < 6; i++) { await page.click('[data-act="do-step"]'); await page.waitForTimeout(150); await h.cont(); }
-  check('"Do this step for me" finishes all 6 steps', page.url().includes('/done') && (await page.textContent('h1')).includes('whole flow'));
+  check('Package A guide has 5 steps', (await h.count()) === 'Step 1 of 5' && (await page.locator('.chip').count()) === 5);
+  check('Package A has no role switch', (await page.locator('.role-switch').count()) === 0);
+  for (let i = 0; i < 5; i++) { await page.click('[data-act="do-step"]'); await page.waitForTimeout(150); await h.cont(); }
+  check('"Do this step for me" finishes all 5 steps', page.url().includes('/done') && (await page.textContent('h1')).includes('whole flow'));
+  await page.context().close();
+
+  // ---- Package A by hand: checklist goes straight to ready, one level of access, 3 accounts
+  page = await open(); h = helpers(page); page.on('dialog', d => d.accept());
+  await page.goto(BASE + '#/release/ORD-1045'); await page.waitForTimeout(150);
+  for (let i = 0; i < 3; i++) { await page.click('[data-act="scan"]'); await page.waitForTimeout(70); }
+  check('Package A checklist has no approval step', (await page.textContent('[data-act="submit-check"]')).includes('Mark ready for pickup'));
+  await page.click('[data-act="submit-check"]'); await page.waitForTimeout(150);
+  check('checklist makes the order ready', (await h.sub()).includes('Ready for Pickup'));
+  check('timeline has no approval step', !(await page.textContent('.timeline')).includes('For Approval'));
+  await h.go('#/orders'); check('no order waits for approval', !(await page.textContent('.page')).includes('For Approval'));
+  check('menu has no approvals', !(await page.locator('.nav').textContent()).includes('Approvals'));
+  await h.go('#/dashboard'); check('dashboard has nothing waiting for approval', !/waiting for/i.test(await page.textContent('.page')));
+  await h.go('#/adjustments'); check('no pending adjustments', !(await page.textContent('.page')).includes('Pending approval'));
+  await h.go('#/approve/ORD-1042'); check('approve page explains the add-on', (await page.textContent('.page')).includes('add-on'));
+  await h.go('#/clearance/ORD-1038'); check('clearance has no approver', !(await page.textContent('.clearance-doc')).includes('Approved by'));
+  await h.go('#/settings?as=admin&tab=users'); check('users show 3 of 3 with full access', (await page.textContent('.page')).includes('3 of 3') && !(await page.textContent('.page')).includes('Rico'));
+  await page.click('[data-act="add-user"]'); await page.waitForTimeout(80); check('a 4th account is blocked', (await page.textContent('.modal')).includes('up to 3'));
+  await page.screenshot({ path: OUT + 'users_limit.png' }); await page.click('.modal [data-close]');
+  await h.go('#/settings?as=admin&tab=roles'); check('roles tab explains the add-on', (await page.textContent('.page')).includes('one level of access'));
+  await h.roles(); await h.go('#/orders'); check('roles add-on restores approval wait', (await page.textContent('.page')).includes('For Approval'));
+  await h.roles(); await h.go('#/orders'); check('switching off clears it', !(await page.textContent('.page')).includes('For Approval'));
   await page.context().close();
 
   // ---- Leaving the guide's page, wrong role, exit
@@ -122,7 +149,7 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  
 
   // ---- Other flows
   page = await open(); h = helpers(page);
-  await page.goto(BASE + '#/dashboard'); await page.waitForTimeout(150);
+  await page.goto(BASE + '#/dashboard'); await page.waitForTimeout(150); await h.roles();
   await h.go('#/release/ORD-1045?as=staff');
   await page.locator('[data-cond]').first().selectOption('minor'); await page.waitForTimeout(40);
   for (let i = 0; i < 3; i++) { await page.click('[data-act="scan"]'); await page.waitForTimeout(70); }
@@ -155,6 +182,7 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  
   await h.go('#/sign/ORD-1041?as=admin'); await h.sign('#sig'); await page.click('#sig-ok'); await page.waitForTimeout(150);
   await h.go('#/order/ORD-1041'); check('receiver signing marks Delivered', (await h.sub()).includes('Delivered'));
   await h.go('#/orders/new'); check('add-on adds the delivery option', (await page.locator('input[value="delivery"]').count()) === 1);
+  await h.roles(); await h.go('#/settings?as=admin&tab=package'); await page.waitForTimeout(50); await h.go('#/orders/new');
   await page.click('[data-act="save-order"]'); await page.waitForTimeout(150); const dId = page.url().match(/ORD-\d+/)[0];
   await h.go(`#/release/${dId}`); const dt = await page.locator('[data-tick]').count(); for (let i = 0; i < dt; i++) { await page.locator('[data-tick]').nth(i).click(); await page.waitForTimeout(40); }
   await page.click('[data-act="submit-check"]'); await page.waitForTimeout(120); await h.go(`#/approve/${dId}?as=supervisor`); await page.click('[data-act="approve-order"]'); await page.waitForTimeout(120);
@@ -168,7 +196,7 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  
   page = await open(); h = helpers(page); page.on('dialog', d => d.accept());
   await page.goto(BASE); await page.click('[data-act="skip-guide"]'); await page.waitForTimeout(150);
   check('explore lands on the dashboard with no guide', (await page.locator('.guide').count()) === 0 && page.url().includes('dashboard'));
-  check('dashboard shows things to try', (await page.locator('.explore-grid a').count()) === 10);
+  check('dashboard shows things to try', (await page.locator('.explore-grid a').count()) === 8);
   await page.screenshot({ path: OUT + 'explore_dashboard.png', fullPage: true });
   await h.go('#/categories'); await page.click('[data-act="add-category"]'); await page.click('#c-save');
   check('category form requires a name', (await page.textContent('.form-err')).includes('Enter'));
@@ -191,7 +219,7 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  
   check('cannot write off more than is there', (await page.textContent('.form-err')).includes('Only 30'));
   await page.keyboard.press('Escape'); await page.waitForTimeout(50);
   check('Escape closes a form', (await page.locator('.modal').count()) === 0);
-  await h.go('#/approvals?as=admin'); const before = await page.locator('[data-act="approve"]').count(); await page.locator('[data-act="approve"]').first().click(); await page.waitForTimeout(100);
+  await h.roles(); await h.go('#/approvals?as=admin'); const before = await page.locator('[data-act="approve"]').count(); await page.locator('[data-act="approve"]').first().click(); await page.waitForTimeout(100);
   check('approving an adjustment clears it', (await page.locator('[data-act="approve"]').count()) === before - 1);
   await h.go('#/settings?as=admin&tab=users'); await page.click('[data-act="add-user"]'); await page.fill('#u-name', 'Ana Reyes'); await page.click('#u-save'); check('user needs a warehouse', (await page.textContent('.form-err')).includes('warehouse'));
   await page.locator('.check-list input').first().check(); await page.click('#u-save'); await page.waitForTimeout(100);
@@ -216,7 +244,7 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  
   await page.click('[data-act="do-step"]'); await page.waitForTimeout(120); await h.cont(); await page.click('[data-act="do-step"]'); await page.waitForTimeout(150); await h.cont();
   await page.locator('[data-tick]').first().click(); await page.waitForTimeout(60);
   await page.reload(); await page.waitForTimeout(250);
-  check('reload keeps the guide step and ticks', (await h.count()) === 'Step 3 of 6' && (await page.locator('.tick.on').count()) === 1);
+  check('reload keeps the guide step and ticks', (await h.count()) === 'Step 3 of 5' && (await page.locator('.tick.on').count()) === 1);
   await page.context().close();
 
   // ---- Every page, on desktop and at phone width
@@ -233,7 +261,7 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  
   check('no page is wider than a 390px phone', !wide.length, wide.join(', '));
   await page.evaluate(() => { location.hash = '#/welcome'; }); await page.waitForTimeout(100);
   await page.tap('[data-act="start-guide"]'); await page.waitForTimeout(120);
-  for (const [n, act] of [['setup', 0], ['book', 0], ['check', 0], ['approve', 0], ['handover', 0], ['return', 0]]) { await page.screenshot({ path: OUT + `phone_guide_${n}.png` }); await page.tap('[data-act="do-step"]'); await page.waitForTimeout(150); await page.tap('.guide .go'); await page.waitForTimeout(150); }
+  for (const [n, act] of [['setup', 0], ['book', 0], ['check', 0], ['handover', 0], ['return', 0]]) { await page.screenshot({ path: OUT + `phone_guide_${n}.png` }); await page.tap('[data-act="do-step"]'); await page.waitForTimeout(150); await page.tap('.guide .go'); await page.waitForTimeout(150); }
   check('guide completes on a phone with taps', page.url().includes('/done'));
   await page.screenshot({ path: OUT + 'phone_done.png', fullPage: true });
   await h.go('#/dashboard?as=admin'); await page.tap('.menu-btn'); await page.waitForTimeout(280);
@@ -242,7 +270,7 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  
   await page.tap('.nav a[href="#/inventory"]'); await page.waitForTimeout(280);
   check('menu closes after choosing a page', await page.evaluate(() => document.querySelector('.side').getBoundingClientRect().right <= 0));
   await page.screenshot({ path: OUT + 'phone_inventory.png' });
-  await h.go('#/release/ORD-1045?as=staff'); await page.screenshot({ path: OUT + 'phone_checklist.png', fullPage: true });
+  await h.go('#/release/ORD-1045'); await page.screenshot({ path: OUT + 'phone_checklist.png', fullPage: true });
   await h.go('#/return/ORD-1037?as=staff'); await page.screenshot({ path: OUT + 'phone_return.png', fullPage: true });
   check('return boxes are labelled on a phone', (await page.locator('.ret-f span:visible').allTextContents()).slice(0, 3).join() === 'Returned,Damaged,For repair');
   check('hidden menu casts no shadow on a phone', await page.evaluate(() => getComputedStyle(document.querySelector('.side')).boxShadow === 'none'));

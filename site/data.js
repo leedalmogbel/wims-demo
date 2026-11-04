@@ -148,8 +148,8 @@ window.WIMS_DATA = (() => {
     { tone: 'info', text: 'ORD-1039 Torres Family Reunion is ready for pickup', when: '3h ago', link: '#/order/ORD-1039' },
     { tone: 'info', text: 'ORD-1041 TechCon 2026 is In Transit to SMX Convention Center', when: '3h ago', link: '#/order/ORD-1041', deliveryOnly: true },
     { tone: 'bad', text: 'Return discrepancy on ORD-1036: 2 chairs missing, 1 tent damaged', when: 'Oct 27', link: '#/order/ORD-1036' },
-    { tone: 'warn', text: 'ORD-1042 Santos Wedding checklist submitted by Maria Santos, waiting for supervisor approval', when: '1h ago', link: '#/approve/ORD-1042' },
-    { tone: 'info', text: '2 stock adjustments from Maria Santos are waiting for approval', when: 'Yesterday', link: '#/approvals' },
+    { tone: 'warn', text: 'ORD-1042 Santos Wedding checklist submitted by Maria Santos, waiting for supervisor approval', when: '1h ago', link: '#/approve/ORD-1042' , rolesOnly: true },
+    { tone: 'info', text: '2 stock adjustments from Maria Santos are waiting for approval', when: 'Yesterday', link: '#/approvals' , rolesOnly: true },
     { tone: 'ok', text: 'ORD-1040 Reyes Debut delivered, clearance signed by Carla Reyes', when: 'Yesterday', link: '#/order/ORD-1040', deliveryOnly: true },
     { tone: 'ok', text: 'ORD-1038 Lim 7th Birthday picked up, clearance signed by Grace Lim', when: 'Nov 2', link: '#/order/ORD-1038' },
   ];

@@ -69,10 +69,10 @@ window.WIMS_DATA = (() => {
     santos: { name: 'Santos Family', contact: 'Ana Santos', phone: '0917 555 0142' },
     techcon: { name: 'TechCon PH Inc.', contact: 'Mark Villanueva', phone: '0918 555 0199' },
     reyes: { name: 'Reyes Family', contact: 'Carla Reyes', phone: '0927 555 0110' },
-    cruz: { name: 'Cruz Family', contact: 'Jun Cruz', phone: '0915 555 0177' },
+    torres: { name: 'Torres Family', contact: 'Jun Torres', phone: '0915 555 0177' },
     lim: { name: 'Lim Family', contact: 'Grace Lim', phone: '0939 555 0134' },
     garcia: { name: 'Garcia Holdings', contact: 'Paolo Garcia', phone: '0905 555 0188' },
-    delacruz: { name: 'Dela Cruz Family', contact: 'Bea Dela Cruz', phone: '0916 555 0123' },
+    aquino: { name: 'Aquino Family', contact: 'Bea Aquino', phone: '0916 555 0123' },
   };
 
   // line: { sku, qty } for count items, { sku, units:[codes] } for per-unit items
@@ -91,7 +91,7 @@ window.WIMS_DATA = (() => {
       date: 'Nov 3, 2026', returnDate: 'Nov 5, 2026', status: 'Delivered',
       lines: [{ sku: 'CHR-TIF-WHT', qty: 120 }, { sku: 'TBL-5FT-RND', qty: 12 }, { sku: 'TNT-2040', units: ['TNT-2040-001'] }],
       clearance: { by: 'Carla Reyes', role: 'Client representative', at: 'Nov 3, 2026 · 2:14 PM', where: 'Alabang Country Club' } },
-    { id: 'ORD-1039', type: 'pickup', event: 'Cruz Family Reunion', venue: 'Customer pickup at Pasig Main', wh: 'PSG', cust: 'cruz',
+    { id: 'ORD-1039', type: 'pickup', event: 'Torres Family Reunion', venue: 'Customer pickup at Pasig Main', wh: 'PSG', cust: 'torres',
       date: 'Nov 4, 2026', returnDate: 'Nov 6, 2026', status: 'Ready for Pickup',
       check: { by: 'Maria Santos', at: 'Nov 3, 2026 · 4:15 PM', note: '' }, approval: { by: 'Rico Bautista', at: 'Nov 3, 2026 · 4:32 PM' },
       lines: [{ sku: 'CHR-MON-BLK', qty: 80 }, { sku: 'TBL-6FT-RCT', qty: 10 }, { sku: 'TNT-1020', units: ['TNT-1020-011'] }] },
@@ -103,10 +103,10 @@ window.WIMS_DATA = (() => {
       date: 'Nov 1, 2026', returnDate: 'Nov 3, 2026', status: 'Returning',
       lines: [{ sku: 'CHR-TIF-WHT', qty: 200 }, { sku: 'TBL-6FT-RCT', qty: 20 }, { sku: 'LIN-TBL-WHT', qty: 20 }, { sku: 'TNT-1020', units: ['TNT-1020-012', 'TNT-1020-013'] }],
       clearance: { by: 'Paolo Garcia', role: 'Client representative', at: 'Nov 1, 2026 · 9:40 AM', where: 'Marriott Grand Ballroom' } },
-    { id: 'ORD-1036', type: 'delivery', event: 'Dela Cruz Wedding', venue: 'Casa Ibarra, Taguig', wh: 'LPS', cust: 'delacruz',
+    { id: 'ORD-1036', type: 'delivery', event: 'Aquino Wedding', venue: 'Casa Ibarra, Taguig', wh: 'LPS', cust: 'aquino',
       date: 'Oct 25, 2026', returnDate: 'Oct 27, 2026', status: 'Returned', discrepancy: true,
       lines: [{ sku: 'CHR-TIF-WHT', qty: 200, back: 198, dmg: 2 }, { sku: 'TBL-5FT-RND', qty: 20, back: 20, dmg: 0 }, { sku: 'TNT-1020', units: ['TNT-1020-006', 'TNT-1020-007'], unitBack: { 'TNT-1020-006': 'good', 'TNT-1020-007': 'repair' } }],
-      clearance: { by: 'Bea Dela Cruz', role: 'Client representative', at: 'Oct 25, 2026 · 8:30 AM', where: 'Casa Ibarra' } },
+      clearance: { by: 'Bea Aquino', role: 'Client representative', at: 'Oct 25, 2026 · 8:30 AM', where: 'Casa Ibarra' } },
   ];
   // Units currently out on orders.
   for (const o of orders) {
@@ -116,11 +116,11 @@ window.WIMS_DATA = (() => {
   }
 
   const damage = [
-    { id: 'DMG-0092', sku: 'TNT-1020', unit: 'TNT-1020-007', order: 'ORD-1036', cust: 'delacruz', before: 'good', after: 'repair',
+    { id: 'DMG-0092', sku: 'TNT-1020', unit: 'TNT-1020-007', order: 'ORD-1036', cust: 'aquino', before: 'good', after: 'repair',
       note: 'Torn side panel, about 40cm, near the zipper. Released in good condition (signed clearance Oct 25).', date: 'Oct 27, 2026', by: 'Maria Santos', status: 'Charged to customer', charge: 3500 },
-    { id: 'DMG-0091', sku: 'CHR-TIF-WHT', unit: null, qty: 2, order: 'ORD-1036', cust: 'delacruz', before: 'good', after: 'damaged',
+    { id: 'DMG-0091', sku: 'CHR-TIF-WHT', unit: null, qty: 2, order: 'ORD-1036', cust: 'aquino', before: 'good', after: 'damaged',
       note: '2 chairs with cracked legs.', date: 'Oct 27, 2026', by: 'Maria Santos', status: 'Charged to customer', charge: 1600 },
-    { id: 'DMG-0090', sku: 'CHR-TIF-WHT', unit: null, qty: 2, order: 'ORD-1036', cust: 'delacruz', before: 'good', after: 'missing',
+    { id: 'DMG-0090', sku: 'CHR-TIF-WHT', unit: null, qty: 2, order: 'ORD-1036', cust: 'aquino', before: 'good', after: 'missing',
       note: '2 chairs not returned (198 of 200).', date: 'Oct 27, 2026', by: 'Maria Santos', status: 'Awaiting Admin review', charge: 2400 },
     { id: 'DMG-0089', sku: 'SND-SPK-15', unit: 'SND-SPK-15-004', order: 'ORD-1031', cust: 'techcon', before: 'good', after: 'damaged',
       note: 'Woofer rattles at high volume.', date: 'Oct 19, 2026', by: 'Jomar Ramos', status: 'Under repair', charge: 0 },
@@ -128,8 +128,8 @@ window.WIMS_DATA = (() => {
 
   const unitHistory = {
     'TNT-1020-007': [
-      { date: 'Oct 27, 2026', text: 'Returned from ORD-1036 Dela Cruz Wedding: good → for repair (torn side panel). DMG-0092', tone: 'bad' },
-      { date: 'Oct 25, 2026', text: 'Released on ORD-1036, signed by Bea Dela Cruz. Condition: good', tone: '' },
+      { date: 'Oct 27, 2026', text: 'Returned from ORD-1036 Aquino Wedding: good → for repair (torn side panel). DMG-0092', tone: 'bad' },
+      { date: 'Oct 25, 2026', text: 'Released on ORD-1036, signed by Bea Aquino. Condition: good', tone: '' },
       { date: 'Oct 12, 2026', text: 'Returned from ORD-1022 Villanueva Christening: good', tone: '' },
       { date: 'Oct 10, 2026', text: 'Released on ORD-1022, signed by Mark Villanueva. Condition: good', tone: '' },
       { date: 'Sep 2, 2026', text: 'Added to stock at Las Piñas. Label printed.', tone: '' },
@@ -137,7 +137,7 @@ window.WIMS_DATA = (() => {
   };
 
   const adjustments = [
-    { id: 'ADJ-0310', type: 'Write-off', sku: 'CHR-TIF-WHT', qty: 2, wh: 'LPS', by: 'Maria Santos', role: 'Staff', note: '2 chairs lost at Dela Cruz Wedding (DMG-0090).', status: 'Pending approval', date: 'Nov 3, 2026' },
+    { id: 'ADJ-0310', type: 'Write-off', sku: 'CHR-TIF-WHT', qty: 2, wh: 'LPS', by: 'Maria Santos', role: 'Staff', note: '2 chairs lost at Aquino Wedding (DMG-0090).', status: 'Pending approval', date: 'Nov 3, 2026' },
     { id: 'ADJ-0309', type: 'Transfer', sku: 'TBL-6FT-RCT', qty: 15, wh: 'LPS → PSG', by: 'Maria Santos', role: 'Staff', note: 'Pasig is low on 6ft tables.', status: 'Pending approval', date: 'Nov 3, 2026' },
     { id: 'ADJ-0308', type: 'Stock-in', sku: 'LIN-SSH-GLD', qty: 100, wh: 'PSG', by: 'Maria Santos', role: 'Staff', note: 'New purchase, PO 2026-118.', status: 'Done', date: 'Nov 2, 2026' },
     { id: 'ADJ-0307', type: 'Condition update', sku: 'TBL-6FT-RCT', qty: 3, wh: 'PSG', by: 'Juan Dela Cruz', role: 'Admin', note: 'Repaired, moved from for repair to good.', status: 'Done', date: 'Oct 30, 2026' },

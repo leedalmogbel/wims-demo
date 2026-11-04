@@ -307,7 +307,7 @@
           <div class="card"><div class="card-h"><h3>Recent activity</h3></div><ul class="feed">
             <li><span class="dot ok"></span><div>ORD-1040 delivered, clearance signed by Carla Reyes<small>Yesterday 2:14 PM · Alabang Country Club</small></div></li>
             <li><span class="dot"></span><div>100 Chair Sash (Gold) stocked in at Pasig Main<small>Nov 2 · Maria Santos</small></div></li>
-            <li><span class="dot bad"></span><div>TNT-1020-007 returned torn, marked for repair<small>Oct 27 · ORD-1036 Dela Cruz Wedding</small></div></li>
+            <li><span class="dot bad"></span><div>TNT-1020-007 returned torn, marked for repair<small>Oct 27 · ORD-1036 Aquino Wedding</small></div></li>
             <li><span class="dot"></span><div>3 tables repaired, moved back to good<small>Oct 30 · Juan Dela Cruz</small></div></li>
           </ul></div>
         </div>

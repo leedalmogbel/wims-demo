@@ -338,6 +338,20 @@ label.f { display: block; font-size: 12px; font-weight: 700; color: var(--ink-2)
 .who-sm { margin-left: 8px; font-size: 11px; font-weight: 700; color: var(--ink-3); }
 .w-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
+.form-err { color: var(--bad); font-weight: 700; font-size: 13px; margin: 8px 0 0; }
+.check-list { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; font-size: 13.5px; }
+.link-btn { background: none; border: 0; padding: 6px 0 0; color: var(--blue); font-weight: 700; font-size: 12px; cursor: pointer; }
+.explore { margin-bottom: 16px; }
+.explore .sub { display: block; }
+.explore-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px 14px; padding: 10px 12px 12px; }
+.explore-grid a { display: flex; gap: 10px; padding: 8px; border-radius: 8px; color: var(--ink); }
+.explore-grid a:hover { background: var(--bg); text-decoration: none; }
+.explore-grid b { display: block; font-size: 13px; }
+.explore-grid small { color: var(--ink-3); font-size: 12px; }
+.tick-sm { width: 20px; height: 20px; border-radius: 6px; border: 2px solid #c5cdd9; flex-shrink: 0; display: grid; place-items: center; }
+.explore-grid .seen .tick-sm { background: var(--ok); border-color: var(--ok); color: #fff; }
+.tick-sm svg { width: 13px; }
+
 .menu-btn, .nav-backdrop { display: none; }
 
 @media (max-width: 1100px) { .g4 { grid-template-columns: 1fr 1fr; } .g-main, .g3 { grid-template-columns: 1fr; } }
@@ -366,6 +380,7 @@ label.f { display: block; font-size: 12px; font-weight: 700; color: var(--ink-2)
   .head h1 { font-size: 20px; }
   .head .actions { width: 100%; }
   .g2, .g3, .g-main, .choice { grid-template-columns: 1fr; }
+  .explore-grid { grid-template-columns: 1fr; }
   .g4 { grid-template-columns: 1fr 1fr; gap: 10px; }
   .kpi { padding: 12px; } .kpi .v { font-size: 23px; }
   /* Tables scroll inside their card rather than widening the page */

@@ -65,6 +65,7 @@ window.WIMS_DATA = (() => {
   unit('LGT-PAR-LED-019').cond = 'repair';
 
   const customers = {
+    navarro: { name: 'Navarro Family', contact: 'Joy Navarro', phone: '0926 555 0151' },
     santos: { name: 'Santos Family', contact: 'Ana Santos', phone: '0917 555 0142' },
     techcon: { name: 'TechCon PH Inc.', contact: 'Mark Villanueva', phone: '0918 555 0199' },
     reyes: { name: 'Reyes Family', contact: 'Carla Reyes', phone: '0927 555 0110' },
@@ -76,8 +77,12 @@ window.WIMS_DATA = (() => {
 
   // line: { sku, qty } for count items, { sku, units:[codes] } for per-unit items
   const orders = [
+    { id: 'ORD-1045', type: 'pickup', event: 'Navarro Christening', venue: 'Customer pickup at Pasig Main', wh: 'PSG', cust: 'navarro',
+      date: 'Nov 7, 2026', returnDate: 'Nov 8, 2026', status: 'Preparing',
+      lines: [{ sku: 'CHR-TIF-WHT', qty: 60 }, { sku: 'TBL-5FT-RND', qty: 6 }, { sku: 'LIN-TBL-WHT', qty: 6 }] },
     { id: 'ORD-1042', type: 'delivery', event: 'Santos Wedding', venue: 'Taal Vista, Tagaytay', wh: 'PSG', cust: 'santos',
-      date: 'Nov 8, 2026', returnDate: 'Nov 9, 2026', status: 'Preparing',
+      date: 'Nov 8, 2026', returnDate: 'Nov 9, 2026', status: 'For Approval',
+      check: { by: 'Maria Santos', at: 'Nov 4, 2026 · 8:40 AM', note: 'One round table has a scratched top. Noted on the checklist; still usable.', cond: { L1: 'minor' } },
       lines: [{ sku: 'CHR-TIF-WHT', qty: 150 }, { sku: 'TBL-5FT-RND', qty: 15 }, { sku: 'LIN-TBL-WHT', qty: 15 }, { sku: 'LIN-SSH-GLD', qty: 150 }, { sku: 'TNT-1020', units: ['TNT-1020-009', 'TNT-1020-010'] }] },
     { id: 'ORD-1041', type: 'delivery', event: 'TechCon 2026', venue: 'SMX Convention Center, Pasay', wh: 'TGG', cust: 'techcon',
       date: 'Nov 4, 2026', returnDate: 'Nov 6, 2026', status: 'In Transit',
@@ -88,6 +93,7 @@ window.WIMS_DATA = (() => {
       clearance: { by: 'Carla Reyes', role: 'Client representative', at: 'Nov 3, 2026 · 2:14 PM', where: 'Alabang Country Club' } },
     { id: 'ORD-1039', type: 'pickup', event: 'Cruz Family Reunion', venue: 'Customer pickup at Pasig Main', wh: 'PSG', cust: 'cruz',
       date: 'Nov 4, 2026', returnDate: 'Nov 6, 2026', status: 'Ready for Pickup',
+      check: { by: 'Maria Santos', at: 'Nov 3, 2026 · 4:15 PM', note: '' }, approval: { by: 'Rico Bautista', at: 'Nov 3, 2026 · 4:32 PM' },
       lines: [{ sku: 'CHR-MON-BLK', qty: 80 }, { sku: 'TBL-6FT-RCT', qty: 10 }, { sku: 'TNT-1020', units: ['TNT-1020-011'] }] },
     { id: 'ORD-1038', type: 'pickup', event: 'Lim 7th Birthday', venue: 'Customer pickup at Taguig', wh: 'TGG', cust: 'lim',
       date: 'Nov 2, 2026', returnDate: 'Nov 4, 2026', status: 'Picked Up',
@@ -141,12 +147,14 @@ window.WIMS_DATA = (() => {
     { tone: 'warn', text: 'Low stock: 6ft Rectangular Table at Pasig Main (8 available, alert at 12)', when: '2h ago', link: '#/item/TBL-6FT-RCT' },
     { tone: 'info', text: 'ORD-1041 TechCon 2026 is In Transit to SMX Convention Center', when: '3h ago', link: '#/order/ORD-1041' },
     { tone: 'bad', text: 'Return discrepancy on ORD-1036: 2 chairs missing, 1 tent damaged', when: 'Oct 27', link: '#/order/ORD-1036' },
-    { tone: 'info', text: '2 stock adjustments from Maria Santos are waiting for approval', when: 'Yesterday', link: '#/adjustments' },
+    { tone: 'warn', text: 'ORD-1042 Santos Wedding checklist submitted by Maria Santos, waiting for supervisor approval', when: '1h ago', link: '#/approve/ORD-1042' },
+    { tone: 'info', text: '2 stock adjustments from Maria Santos are waiting for approval', when: 'Yesterday', link: '#/approvals' },
     { tone: 'ok', text: 'ORD-1040 Reyes Debut delivered, clearance signed by Carla Reyes', when: 'Yesterday', link: '#/order/ORD-1040' },
   ];
 
   const users = [
     { name: 'Juan Dela Cruz', email: 'juan@example.com', role: 'Admin', wh: 'All warehouses', active: true },
+    { name: 'Rico Bautista', email: 'rico@example.com', role: 'Supervisor', wh: 'Pasig Main, Las Piñas', active: true },
     { name: 'Maria Santos', email: 'maria@example.com', role: 'Staff', wh: 'Pasig Main, Las Piñas', active: true },
     { name: 'Jomar Ramos', email: 'jomar@example.com', role: 'Staff', wh: 'Taguig', active: true },
     { name: 'Liza Mendoza', email: 'liza@example.com', role: 'Staff', wh: 'Quezon City', active: false },

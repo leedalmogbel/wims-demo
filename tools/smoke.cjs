@@ -11,7 +11,7 @@ const OUT = __dirname + '/shots/';
   page.on('pageerror', e => errors.push('pageerror ' + page.url() + ' ' + e.message));
   page.on('console', m => { if (m.type() === 'error') errors.push('console ' + page.url() + ' ' + m.text()); });
 
-  const routes = ['#/dashboard', '#/orders', '#/orders/new', '#/order/ORD-1039', '#/release/ORD-1039', '#/clearance/ORD-1040',
+  const routes = ['#/dashboard', '#/orders', '#/orders/new', '#/order/ORD-1045', '#/release/ORD-1045', '#/approvals', '#/approve/ORD-1042', '#/order/ORD-1039', '#/clearance/ORD-1040',
     '#/return/ORD-1037', '#/order/ORD-1036', '#/damage/DMG-0092', '#/damage/DMG-0089', '#/item/TNT-1020/TNT-1020-007', '#/item/CHR-TIF-WHT',
     '#/inventory', '#/labels', '#/phone', '#/adjustments', '#/reports', '#/settings', '#/warehouses', '#/categories', '#/notifications', '#/damage'];
   await page.goto(BASE + '#/dashboard');
@@ -26,20 +26,45 @@ const OUT = __dirname + '/shots/';
     await page.screenshot({ path: OUT + r.replace(/[#/]+/g, '_').replace(/^_/, '') + '.png', fullPage: true });
   }
 
-  // Flow: pickup release -> sign -> clearance
-  await page.evaluate(() => { location.hash = '#/release/ORD-1039'; });
-  for (let i = 0; i < 5; i++) { await page.click('[data-act="scan"]'); await page.waitForTimeout(80); }
-  console.log('release progress:', (await page.textContent('.card-h .sub')).trim());
-  await page.click('a[href="#/sign/ORD-1039"]');
-  await page.waitForSelector('#sig');
-  const box = await page.locator('#sig').boundingBox();
-  await page.mouse.move(box.x + 20, box.y + 60); await page.mouse.down();
-  for (let i = 0; i < 30; i++) await page.mouse.move(box.x + 20 + i * 8, box.y + 60 + Math.sin(i) * 25);
-  await page.mouse.up();
-  console.log('sign enabled:', await page.isEnabled('#sig-ok'));
+  const go = async h => { await page.evaluate(x => { location.hash = x; }, h); await page.waitForTimeout(150); };
+  const sub = async () => (await page.textContent('.head p')).replace(/\s+/g, ' ').trim();
+  const sign = async sel => { const box = await page.locator(sel).boundingBox(); await page.mouse.move(box.x + 20, box.y + 50); await page.mouse.down();
+    for (let i = 0; i < 30; i++) await page.mouse.move(box.x + 20 + i * 7, box.y + 50 + Math.sin(i) * 20); await page.mouse.up(); };
+
+  // Flow: staff checklist -> supervisor approves -> customer signs
+  await go('#/release/ORD-1045?as=staff');
+  console.log('submit locked before checklist:', !(await page.isEnabled('[data-act="submit-check"]')));
+  for (let i = 0; i < 3; i++) { await page.click('[data-act="scan"]'); await page.waitForTimeout(80); }
+  await page.fill('#chk-note', 'All good');
+  await page.click('[data-act="submit-check"]'); await page.waitForTimeout(200);
+  console.log('after submit:', await sub());
+  await go('#/sign/ORD-1045?as=staff'); console.log('sign before approval blocked:', (await page.textContent('.note')).trim().slice(0, 60));
+  await go('#/approve/ORD-1045?as=staff'); console.log('staff cannot approve:', (await page.locator('[data-act="approve-order"]').count()) === 0);
+  await go('#/approvals?as=supervisor'); console.log('supervisor queue:', (await page.locator('a[href^="#/approve/"]').allTextContents()).join(', '));
+  await go('#/approve/ORD-1045?as=supervisor'); await page.click('[data-act="approve-order"]'); await page.waitForTimeout(200);
+  console.log('after approve:', await sub());
+  await go('#/sign/ORD-1045?as=staff'); await sign('#sig');
   await page.click('#sig-ok'); await page.waitForTimeout(200);
   console.log('after sign:', page.url(), (await page.textContent('h2')).trim());
   await page.screenshot({ path: OUT + 'flow_clearance_signed.png', fullPage: true });
+
+  // Flow: supervisor sends back, staff resubmits, supervisor approves, dispatch
+  await go('#/approve/ORD-1042?as=supervisor');
+  await page.screenshot({ path: OUT + 'flow_approve_review.png', fullPage: true });
+  await page.click('[data-act="send-back"]'); await page.waitForTimeout(100);
+  console.log('send back needs reason, still on:', page.url().split('#')[1]);
+  await page.fill('#back-reason', 'Swap the scratched round table for a good one.');
+  await page.click('[data-act="send-back"]'); await page.waitForTimeout(200);
+  console.log('after send back:', await sub());
+  await go('#/dashboard?as=staff'); await page.screenshot({ path: OUT + 'flow_staff_dashboard.png', fullPage: true });
+  await go('#/release/ORD-1042?as=staff');
+  for (let i = 0; i < 6; i++) { await page.click('[data-act="scan"]'); await page.waitForTimeout(60); }
+  await page.click('[data-act="submit-check"]'); await page.waitForTimeout(200);
+  await go('#/approve/ORD-1042?as=supervisor'); await page.click('[data-act="approve-order"]'); await page.waitForTimeout(200);
+  console.log('after re-approve:', await sub());
+  await page.click('[data-act="dispatch"]'); await page.waitForTimeout(200);
+  console.log('after dispatch:', await sub());
+  await page.screenshot({ path: OUT + 'flow_order_after_dispatch.png', fullPage: true });
 
   // Flow: return with a shortfall
   await page.evaluate(() => { location.hash = '#/return/ORD-1037'; }); await page.waitForTimeout(150);
@@ -59,12 +84,6 @@ const OUT = __dirname + '/shots/';
   await page.click('[data-act="save-order"]'); await page.waitForTimeout(200);
   console.log('new order:', page.url());
 
-  // Delivery: dispatch then sign on site
-  await page.evaluate(() => { location.hash = '#/release/ORD-1042'; });
-  for (let i = 0; i < 8; i++) { await page.click('[data-act="scan"]'); await page.waitForTimeout(40); }
-  await page.click('[data-act="dispatch"]'); await page.waitForTimeout(150);
-  console.log('after dispatch:', page.url(), (await page.textContent('.head p')).replace(/\s+/g, ' ').trim());
-
   // Phone: scan + sign
   await page.evaluate(() => { location.hash = '#/phone'; }); await page.waitForTimeout(150);
   await page.click('button[data-act="phone-scan"]'); await page.waitForTimeout(100);
@@ -76,10 +95,13 @@ const OUT = __dirname + '/shots/';
 
   // Staff view
   await page.evaluate(() => { location.hash = '#/dashboard'; }); await page.waitForTimeout(100);
-  await page.click('[data-role="staff"]'); await page.waitForTimeout(150);
+  await page.click('[data-role="staff"]'); await page.waitForTimeout(250);
   console.log('staff nav:', (await page.locator('.nav a').allTextContents()).map(s => s.trim()).join(', '));
   await page.evaluate(() => { location.hash = '#/reports'; }); await page.waitForTimeout(100);
   console.log('staff on reports:', (await page.textContent('h1')).trim());
+  await go('#/dashboard?as=supervisor'); console.log('supervisor nav:', (await page.locator('.nav a').allTextContents()).map(s => s.trim()).join(', '));
+  await go('#/settings?as=admin'); await page.click('[data-stab="roles"]'); await page.waitForTimeout(100);
+  await page.screenshot({ path: OUT + 'roles.png', fullPage: true });
 
   console.log('\nERRORS:', errors.length ? '\n' + errors.join('\n') : 'none');
   await browser.close();

@@ -2,6 +2,9 @@
 (() => {
   const D = window.WIMS_DATA;
   const app = document.getElementById('app');
+  const seedRelease = () => {
+    for (const o of D.orders) if (o.check) S.release[o.id] = { ticks: Object.fromEntries(lineKeys(o).map(k => [k, true])), cond: { ...(o.check.cond || {}) } };
+  };
 
   // ---------- state ----------
   const S = {
@@ -16,7 +19,11 @@
     nextDmg: 93,
     nextAdj: 311,
   };
-  const ME = { admin: { name: 'Juan Dela Cruz', role: 'Admin', whs: null }, staff: { name: 'Maria Santos', role: 'Staff', whs: ['PSG', 'LPS'] } };
+  const ME = {
+    admin: { name: 'Juan Dela Cruz', role: 'Admin', whs: null, scope: 'Admin · All warehouses' },
+    supervisor: { name: 'Rico Bautista', role: 'Supervisor', whs: ['PSG', 'LPS'], scope: 'Supervisor · Pasig Main, Las Piñas' },
+    staff: { name: 'Maria Santos', role: 'Staff', whs: ['PSG', 'LPS'], scope: 'Staff · Pasig Main, Las Piñas' },
+  };
   const me = () => ME[S.role];
 
   // ---------- helpers ----------
@@ -32,11 +39,14 @@
   const unit = code => allUnits().find(u => u.code === code);
   const lineQty = l => (l.units ? l.units.length : l.qty);
   const OUT = ['In Transit', 'Delivered', 'Picked Up', 'Returning'];
-  const RES = ['Preparing', 'Ready for Pickup'];
+  const RES = ['Preparing', 'For Approval', 'Ready for Pickup', 'Ready to Dispatch'];
   const FLOW = {
-    delivery: ['Preparing', 'In Transit', 'Delivered', 'Returning', 'Returned'],
-    pickup: ['Preparing', 'Ready for Pickup', 'Picked Up', 'Returned'],
+    delivery: ['Preparing', 'For Approval', 'Ready to Dispatch', 'In Transit', 'Delivered', 'Returning', 'Returned'],
+    pickup: ['Preparing', 'For Approval', 'Ready for Pickup', 'Picked Up', 'Returned'],
   };
+  const canApprove = o => S.role === 'admin' || (S.role === 'supervisor' && myWh(o.wh));
+  const supervisorOf = whId => (D.users.find(u => u.role === 'Supervisor' && u.wh.includes(wh(whId).name)) || { name: 'the Admin' }).name;
+  const lineKeys = o => o.lines.flatMap((l, i) => l.units || ['L' + i]);
   const myWh = w => !me().whs || me().whs.includes(w);
   const visibleOrders = () => D.orders.filter(o => myWh(o.wh));
   const unitOrder = code => D.orders.find(o => OUT.includes(o.status) && o.lines.some(l => (l.units || []).includes(code)));
@@ -120,7 +130,7 @@
   // ---------- small UI pieces ----------
   const statusTone = (o) => {
     if (o.status === 'Returned') return o.discrepancy ? 'bad' : 'mute';
-    return { Preparing: 'warn', 'Ready for Pickup': 'info', 'In Transit': 'info', Delivered: 'ok', 'Picked Up': 'ok', Returning: 'info' }[o.status];
+    return { Preparing: 'mute', 'For Approval': 'warn', 'Ready for Pickup': 'info', 'Ready to Dispatch': 'info', 'In Transit': 'info', Delivered: 'ok', 'Picked Up': 'ok', Returning: 'info' }[o.status];
   };
   const statusPill = o => `<span class="pill ${statusTone(o)}">${o.status}${o.status === 'Returned' && o.discrepancy ? ' · discrepancy' : ''}</span>`;
   const typeTag = o => o.type === 'delivery' ? `<span class="tag delivery">${ic('truck')}Delivery</span>` : `<span class="tag pickup">${ic('hand')}Pickup</span>`;
@@ -175,13 +185,15 @@
 
   // ---------- guided tour ----------
   const TOUR = [
-    ['#/dashboard', 'The <b>Admin dashboard</b>: stock across all warehouses, orders out at events, items that need repair, and anything waiting on you.'],
+    ['#/dashboard?as=admin', 'The <b>Admin dashboard</b> (Juan): stock across all warehouses, orders out at events, items that need repair, and anything waiting on you.'],
     ['#/orders', 'Every order is either a <b>Delivery</b> (we bring the items to the event) or a <b>Pickup</b> (the customer collects them at the warehouse).'],
     ['#/orders/new', '<b>Creating an order.</b> As you add items, the system checks stock in the chosen warehouse. Try asking for more than is available.'],
-    ['#/order/ORD-1039', 'A <b>Pickup order</b> that is ready. The customer is at the counter. Click <b>Release to customer</b>.'],
-    ['#/release/ORD-1039', '<b>Release checklist.</b> Tick every line, or tap <b>Scan</b>. Release stays <b>locked</b> until every item is counted and its condition recorded.'],
-    ['#/sign/ORD-1039', '<b>Customer clearance.</b> The customer signs that they received exactly these items, in this condition. Draw a signature to try it.'],
-    ['#/clearance/ORD-1040', 'A <b>signed clearance</b> from a delivery, signed on the phone at the event venue. Printable, and saved on the order.'],
+    ['#/order/ORD-1045?as=staff', 'You are now <b>Maria (Staff)</b> at Pasig Main. A pickup needs preparing. Click <b>Start checklist</b>.'],
+    ['#/release/ORD-1045?as=staff', '<b>Staff checklist.</b> Maria counts every line and records its condition, or taps <b>Scan</b>. Submit stays <b>locked</b> until every line is checked. Then <b>Submit for supervisor approval</b>.'],
+    ['#/approvals?as=supervisor', 'You are now <b>Rico (Supervisor)</b> of Pasig Main and Las Piñas. Checklists from his staff wait here for his approval.'],
+    ['#/approve/ORD-1042?as=supervisor', '<b>Supervisor review.</b> Rico sees exactly what Maria counted, reads her note, then <b>approves</b> it or <b>sends it back</b> with a reason.'],
+    ['#/sign/ORD-1039?as=staff', 'Back as <b>Maria</b>. ORD-1039 was approved by Rico, so the customer can now <b>sign the clearance</b> at the counter. Draw a signature to try it.'],
+    ['#/clearance/ORD-1040?as=admin', 'Back as <b>Juan (Admin)</b>. A <b>signed clearance</b> from a delivery: who checked it, who approved it, and who signed for it at the venue.'],
     ['#/return/ORD-1037', '<b>Processing a return.</b> The released list is shown next to what came back. Change a number or a condition to see shortfalls and damage get flagged.'],
     ['#/order/ORD-1036', 'A <b>returned order with a discrepancy</b>: 2 chairs missing, 2 damaged, and a tent that came back torn.'],
     ['#/damage/DMG-0092', 'A <b>damage report</b>. It links the exact tent unit to the order, the customer, and the clearance they signed when it left in good condition.'],
@@ -189,15 +201,15 @@
     ['#/inventory', '<b>Inventory</b>: filter by warehouse, category or condition. Chairs and tables are tracked by count; tents and sound gear per unit.'],
     ['#/labels', '<b>QR labels.</b> Print on A4 sticker paper with any printer, or use a small thermal label printer. These QR codes are real; try scanning one.'],
     ['#/phone', '<b>On the phone.</b> Staff open WIMS in the phone browser: scan with the camera, and get the clearance signed at the venue. No app to install.'],
-    ['#/adjustments', '<b>Stock adjustments.</b> Staff record stock-ins and changes; write-offs and transfers wait for Admin approval.'],
+    ['#/adjustments', '<b>Stock adjustments.</b> Staff record stock-ins and changes; write-offs and transfers wait for the supervisor or Admin to approve.'],
     ['#/reports', '<b>Reports</b>: inventory, deliveries and operations, including discrepancies and damage per item.'],
-    ['#/settings', '<b>Settings</b>: users, roles and the company profile. Try switching to <b>Staff</b> at the top to see what a staff member sees.'],
+    ['#/settings', '<b>Settings</b>: users, roles and the company profile. See <b>Roles &amp; permissions</b> for what Admin, Supervisor and Staff can each do. Switch roles at the top any time.'],
   ];
   const PAGE_TEXT = {
     dashboard: 'The dashboard.', inventory: 'Inventory list.', item: 'Item details: stock per warehouse, the QR label, and units.', warehouses: 'Warehouse locations and their stock.',
     categories: 'Item categories.', orders: 'All orders, delivery and pickup.', 'orders/new': 'Create an order.', order: 'Order details.', release: 'Release checklist: every line must be checked before release.',
     sign: 'Clearance: the receiver signs for exactly what they received.', clearance: 'Signed clearance, ready to print.', return: 'Return processing.', damage: 'Damage and loss reports.',
-    adjustments: 'Stock adjustments.', reports: 'Reports.', notifications: 'Notifications.', settings: 'Settings.', labels: 'QR labels.', phone: 'Phone screens.',
+    adjustments: 'Stock adjustments.', approve: 'Supervisor review: approve the checklist or send it back.', approvals: 'Approvals.', reports: 'Reports.', notifications: 'Notifications.', settings: 'Settings.', labels: 'QR labels.', phone: 'Phone screens.',
   };
   function guideBar(route, key) {
     if (!S.guide) return '';
@@ -216,6 +228,8 @@
   function shell(key, route, body, pageKey) {
     const admin = S.role === 'admin';
     const pendingAdj = D.adjustments.filter(a => a.status === 'Pending approval').length;
+    const approver = S.role !== 'staff';
+    const pendingAll = D.orders.filter(o => o.status === 'For Approval' && canApprove(o)).length + (approver ? pendingAdj : 0);
     const navItem = (href, k, icon, label, extra = '') => `<a href="${href}" class="${key === k ? 'on' : ''}">${ic(icon)}${label}${extra}</a>`;
     const unread = D.notifications.length;
     return `<div class="shell">
@@ -227,10 +241,11 @@
           ${navItem('#/inventory', 'inventory', 'box', 'Inventory')}
           ${admin ? navItem('#/warehouses', 'warehouses', 'wh', 'Warehouses') : ''}
           ${admin ? navItem('#/categories', 'categories', 'tag', 'Categories') : ''}
-          ${navItem('#/adjustments', 'adjustments', 'adj', 'Adjustments', admin && pendingAdj ? `<span class="count">${pendingAdj}</span>` : '')}
+          ${navItem('#/adjustments', 'adjustments', 'adj', 'Adjustments')}
           ${navItem('#/labels', 'labels', 'qr', 'QR labels')}
           <div class="nav-group">Orders</div>
           ${navItem('#/orders', 'orders', 'clip', 'Orders')}
+          ${navItem('#/approvals', 'approvals', 'check', approver ? 'Approvals' : 'My submissions', approver && pendingAll ? `<span class="count">${pendingAll}</span>` : '')}
           ${navItem('#/damage', 'damage', 'wrench', 'Damage & loss')}
           ${navItem('#/phone', 'phone', 'phone', 'On the phone')}
           ${admin ? `<div class="nav-group">Admin</div>${navItem('#/reports', 'reports', 'chart', 'Reports')}${navItem('#/settings', 'settings', 'gear', 'Settings')}` : ''}
@@ -241,9 +256,9 @@
         <header class="topbar no-print">
           <div class="search">${ic('search')}<input id="q" placeholder="Search items, SKUs, unit codes, orders…" value="${esc(S.q)}"></div>
           <div class="spacer"></div>
-          <div class="role-switch" title="Switch role to compare views"><button class="${admin ? 'on' : ''}" data-role="admin">Admin</button><button class="${admin ? '' : 'on'}" data-role="staff">Staff</button></div>
+          <div class="role-switch" title="Switch role to compare views">${['admin', 'supervisor', 'staff'].map(r => `<button class="${S.role === r ? 'on' : ''}" data-role="${r}">${ME[r].role}</button>`).join('')}</div>
           <a class="bell" href="#/notifications">${ic('bell')}<i>${unread}</i></a>
-          <div class="me"><div class="avatar">${me().name.split(' ').map(x => x[0]).join('')}</div><div><b>${me().name}</b><small>${admin ? 'Admin · All warehouses' : 'Staff · Pasig Main, Las Piñas'}</small></div></div>
+          <div class="me"><div class="avatar">${me().name.split(' ').map(x => x[0]).join('')}</div><div><b>${me().name}</b><small>${me().scope}</small></div></div>
         </header>
         ${guideBar(route, pageKey)}
         <div class="page">${body}</div>
@@ -264,8 +279,9 @@
     const low = lowStock(whs);
     const pending = D.adjustments.filter(a => a.status === 'Pending approval');
     const disc = orders.filter(o => o.discrepancy);
-    const greet = S.role === 'admin' ? 'Good morning, Juan' : 'Good morning, Maria';
+    const greet = `Good morning, ${me().name.split(' ')[0]}`;
     const scope = S.role === 'admin' ? 'All 4 warehouses' : 'Pasig Main and Las Piñas (your assigned warehouses)';
+    const waiting = orders.filter(o => o.status === 'For Approval' && canApprove(o));
     return head(greet, `${scope} · Wednesday, Nov 4, 2026`, `<a class="btn" href="#/phone">${ic('cam')}Scan</a><a class="btn primary" href="#/orders/new">${ic('plus')}New order</a>`) + `
       <div class="grid g4">
         ${kpi('Total stock', n(total), 'pieces across all conditions', 'box')}
@@ -281,10 +297,12 @@
           </table>
         </div>
         <div class="stack">
+          ${waiting.length ? `<div class="card" style="border-color:#f3c46b"><div class="card-h"><h3>Waiting for your approval</h3><span class="pill warn">${waiting.length}</span></div><ul class="feed">${waiting.map(o => `<li><span class="dot warn"></span><div style="flex:1"><a href="#/approve/${o.id}">${o.id} · ${esc(o.event)}</a><small>Checklist by ${o.check.by} · ${o.check.at}</small></div><a class="btn sm primary" href="#/approve/${o.id}">Review</a></li>`).join('')}</ul></div>` : ''}
+          ${S.role === 'staff' ? `<div class="card"><div class="card-h"><h3>Your orders to prepare</h3></div><ul class="feed">${orders.filter(o => o.status === 'Preparing').map(o => `<li><span class="dot ${o.sentBack ? 'bad' : ''}"></span><div style="flex:1"><a href="#/order/${o.id}">${o.id} · ${esc(o.event)}</a><small>${o.sentBack ? `Sent back by ${o.sentBack.by}: ${esc(o.sentBack.reason)}` : 'Checklist not started'}</small></div><a class="btn sm" href="#/release/${o.id}">Checklist</a></li>`).join('') || '<li>Nothing to prepare.</li>'}</ul></div>` : ''}
           <div class="card"><div class="card-h"><h3>Needs attention</h3></div><ul class="feed">
             ${low.map(x => `<li><span class="dot warn"></span><div><a href="#/item/${x.it.sku}">Low stock: ${esc(x.it.name)}</a><small>${x.w.name}: ${x.s.avail} available, alert at ${x.it.low}</small></div></li>`).join('')}
             ${disc.map(o => `<li><span class="dot bad"></span><div><a href="#/order/${o.id}">Return discrepancy: ${esc(o.event)}</a><small>${o.id} · missing or damaged items</small></div></li>`).join('')}
-            ${S.role === 'admin' ? pending.map(a => `<li><span class="dot"></span><div><a href="#/adjustments">${a.type} waiting for approval</a><small>${a.qty} × ${esc(item(a.sku).name)} · by ${a.by}</small></div></li>`).join('') : ''}
+            ${S.role !== 'staff' ? pending.map(a => `<li><span class="dot"></span><div><a href="#/adjustments">${a.type} waiting for approval</a><small>${a.qty} × ${esc(item(a.sku).name)} · by ${a.by}</small></div></li>`).join('') : ''}
           </ul></div>
           <div class="card"><div class="card-h"><h3>Recent activity</h3></div><ul class="feed">
             <li><span class="dot ok"></span><div>ORD-1040 delivered, clearance signed by Carla Reyes<small>Yesterday 2:14 PM · Alabang Country Club</small></div></li>
@@ -436,9 +454,10 @@
     const tl = flow.map((st, i) => `<div class="st ${i < idx || o.status === 'Returned' ? 'done' : i === idx ? 'now' : ''}"><div class="b">${i < idx || o.status === 'Returned' ? ic('check') : ''}</div>${st}</div>`).join('');
     const rel = S.release[id];
     let action = '';
-    if (o.status === 'Preparing' && o.type === 'pickup') action = `<button class="btn primary" data-act="status" data-to="Ready for Pickup">Mark ready for pickup</button>`;
-    else if (o.status === 'Preparing') action = `<a class="btn primary" href="#/release/${id}">${ic('clip')}Start release checklist</a>`;
-    else if (o.status === 'Ready for Pickup') action = `<a class="btn primary" href="#/release/${id}">${ic('hand')}Release to customer</a>`;
+    if (o.status === 'Preparing') action = `<a class="btn primary" href="#/release/${id}">${ic('clip')}${o.sentBack ? 'Fix and resubmit checklist' : 'Start checklist'}</a>`;
+    else if (o.status === 'For Approval') action = canApprove(o) ? `<a class="btn primary" href="#/approve/${id}">${ic('check')}Review and approve</a>` : `<span class="pill warn" style="padding:8px 12px">Waiting for ${supervisorOf(o.wh)} (Supervisor)</span>`;
+    else if (o.status === 'Ready for Pickup') action = `<a class="btn primary" href="#/sign/${id}">${ic('hand')}Customer is here: sign clearance</a>`;
+    else if (o.status === 'Ready to Dispatch') action = `<button class="btn primary" data-act="dispatch" data-id="${id}">${ic('truck')}Dispatch: mark In Transit</button>`;
     else if (o.status === 'In Transit') action = `<a class="btn primary" href="#/sign/${id}">${ic('sign')}Hand over at venue (receiver signs)</a>`;
     else if (o.status === 'Delivered') action = `<button class="btn primary" data-act="status" data-to="Returning">${ic('truck')}Collect from venue</button>`;
     else if (o.status === 'Returning' || o.status === 'Picked Up') action = `<a class="btn primary" href="#/return/${id}">${ic('ret')}Process return</a>`;
@@ -462,6 +481,12 @@
             <dt>Customer</dt><dd>${esc(c.name)}</dd><dt>Contact</dt><dd>${esc(c.contact)} · ${c.phone}</dd>
             <dt>${o.type === 'delivery' ? 'Venue' : 'Pickup at'}</dt><dd>${esc(o.venue)}</dd><dt>Warehouse</dt><dd>${wh(o.wh).name}</dd>
             <dt>${o.type === 'delivery' ? 'Delivery' : 'Pickup'}</dt><dd>${o.date}</dd><dt>Return</dt><dd>${o.returnDate}</dd></dl></div></div>
+          <div class="card"><div class="card-h"><h3>Checklist &amp; approval</h3>${o.approval ? '<span class="pill ok">Approved</span>' : o.status === 'For Approval' ? '<span class="pill warn">For approval</span>' : o.sentBack ? '<span class="pill bad">Sent back</span>' : o.check || o.clearance ? '<span class="pill ok">Done</span>' : '<span class="pill mute">Not started</span>'}</div><ul class="feed">
+            ${o.sentBack ? `<li><span class="dot bad"></span><div><b>Sent back by ${o.sentBack.by}</b>: ${esc(o.sentBack.reason)}<small>${o.sentBack.at}</small></div></li>` : ''}
+            ${o.check ? `<li><span class="dot ok"></span><div><b>Checklist by ${o.check.by}</b> (Staff)${o.check.note ? `: “${esc(o.check.note)}”` : ''}<small>${o.check.at}</small></div></li>` : !o.clearance ? `<li><span class="dot"></span><div>Staff count every line and submit the checklist<small>Then ${supervisorOf(o.wh)} (Supervisor) approves it</small></div></li>` : ''}
+            ${o.approval ? `<li><span class="dot ok"></span><div><b>Approved by ${o.approval.by}</b> (${o.approval.role || 'Supervisor'})<small>${o.approval.at}</small></div></li>` : o.status === 'For Approval' ? `<li><span class="dot warn"></span><div>Waiting for <b>${supervisorOf(o.wh)}</b> (Supervisor)<small>Submitted ${o.check.at}</small></div></li>` : ''}
+            ${o.clearance && !o.check ? `<li><span class="dot ok"></span><div>Checked and approved before release<small>${o.clearance.at}</small></div></li>` : ''}
+          </ul></div>
           <div class="card"><div class="card-h"><h3>Clearance</h3>${o.clearance ? '<span class="pill ok">Signed</span>' : '<span class="pill mute">Not signed yet</span>'}</div><div class="card-b">
             ${o.clearance ? `<div class="sig-img">${S.sigs[id] ? `<img src="${S.sigs[id]}">` : scribble(o.clearance.by)}</div><p style="margin:8px 0 12px;font-size:13px"><b>${esc(o.clearance.by)}</b>, ${esc(o.clearance.role)}<br><span style="color:var(--ink-3)">${o.clearance.at} · ${esc(o.clearance.where)}</span></p><a class="btn sm" href="#/clearance/${id}">${ic('eye')}View / print clearance</a>`
               : `<p style="margin:0;color:var(--ink-2);font-size:13px">${o.type === 'pickup' ? 'The customer signs at the counter after the release checklist is complete.' : 'The receiver signs at the venue on the staff member\'s phone when the items are handed over.'}</p>`}
@@ -473,7 +498,8 @@
 
   pages.release = id => {
     const o = order(id); if (!o) return notFound();
-    if (!['Preparing', 'Ready for Pickup'].includes(o.status)) return head('Release checklist', `${o.id} has already been released.`) + `<a class="btn" href="#/order/${id}">Back to order</a>`;
+    if (o.status === 'For Approval') return head('Checklist submitted', `${o.id} · ${esc(o.event)}`) + note(`Submitted by ${o.check.by} on ${o.check.at}. Waiting for <b>${supervisorOf(o.wh)}</b> (Supervisor) to approve.`, 'warn') + `<p><a class="btn" href="#/order/${id}">Back to order</a> ${canApprove(o) ? `<a class="btn primary" href="#/approve/${id}">Review and approve</a>` : ''}</p>`;
+    if (o.status !== 'Preparing') return head('Checklist', `${o.id} checklist is done and approved.`) + `<a class="btn" href="#/order/${id}">Back to order</a>`;
     const r = S.release[id] || (S.release[id] = { ticks: {}, cond: {} });
     const keys = []; o.lines.forEach((l, i) => l.units ? l.units.forEach(u => keys.push(u)) : keys.push('L' + i));
     const done = keys.filter(k => r.ticks[k]).length, all = done === keys.length;
@@ -486,16 +512,17 @@
         ${l.units.map(u => `<div class="check-row unit ${r.ticks[u] ? 'done' : ''}" id="row-${u}">${tick(u)}<div class="lab"><b class="mono">${u}</b></div><div>1 unit</div>${condSel(u)}</div>`).join('')}</div>`;
     }).join('');
     const isPickup = o.type === 'pickup';
-    return head('Release checklist', `${o.id} · ${esc(o.event)} · ${typeTag(o)} · from ${wh(o.wh).name}`, `<button class="btn" data-act="scan" data-id="${id}">${ic('cam')}Scan next item</button>`, `<a href="#/orders">Orders</a> / <a href="#/order/${id}">${o.id}</a> / Release`) + `
+    return head('Checklist', `${o.id} · ${esc(o.event)} · ${typeTag(o)} · from ${wh(o.wh).name}`, `<button class="btn" data-act="scan" data-id="${id}">${ic('cam')}Scan next item</button>`, `<a href="#/orders">Orders</a> / <a href="#/order/${id}">${o.id}</a> / Release`) + `
       <div class="grid g-main">
         <div class="card"><div class="card-h"><h3>Count every line and record its condition</h3><span class="sub">${done} of ${keys.length} checked</span></div>${rows}</div>
         <div class="stack"><div class="card"><div class="card-b">
           <div style="display:flex;justify-content:space-between;font-weight:700;margin-bottom:8px"><span>Progress</span><span>${Math.round(done / keys.length * 100)}%</span></div>
           <div class="progress"><div style="width:${done / keys.length * 100}%"></div></div>
-          <div style="margin:16px 0">${all ? note(`All ${keys.length} lines checked. ${isPickup ? 'The customer can now sign the clearance.' : 'The order can be dispatched. The receiver signs at the venue.'}`, 'ok') : note(`<b>Release is locked</b> until every line is checked. ${keys.length - done} left.`, 'warn')}</div>
-          ${isPickup ? (all ? `<a class="btn primary" style="width:100%;justify-content:center" href="#/sign/${id}">${ic('sign')}Continue to customer clearance</a>` : `<button class="btn primary" style="width:100%;justify-content:center" disabled>${ic('sign')}Continue to customer clearance</button>`)
-            : `<button class="btn primary" style="width:100%;justify-content:center" data-act="dispatch" data-id="${id}" ${all ? '' : 'disabled'}>${ic('truck')}Dispatch: mark In Transit</button>`}
-          <p style="font-size:12px;color:var(--ink-3);margin:12px 0 0">Released by ${me().name} · ${wh(o.wh).name}. Conditions recorded here are printed on the clearance.</p>
+          ${o.sentBack ? `<div style="margin-top:16px">${note(`<b>Sent back by ${o.sentBack.by}:</b> ${esc(o.sentBack.reason)}`, 'bad')}</div>` : ''}
+          <div style="margin:16px 0">${all ? note(`All ${keys.length} lines checked. Submit it to <b>${supervisorOf(o.wh)}</b> (Supervisor) for approval.`, 'ok') : note(`<b>Submit is locked</b> until every line is checked. ${keys.length - done} left.`, 'warn')}</div>
+          <div class="field"><label class="f">Note for the supervisor (optional)</label><textarea class="in" rows="2" id="chk-note" placeholder="e.g. 1 table has a scratched top"></textarea></div>
+          <button class="btn primary" style="width:100%;justify-content:center" data-act="submit-check" data-id="${id}" ${all ? '' : 'disabled'}>${ic('arrow')}Submit for supervisor approval</button>
+          <p style="font-size:12px;color:var(--ink-3);margin:12px 0 0">Checked by ${me().name} · ${wh(o.wh).name}. After approval, ${isPickup ? 'the customer signs the clearance at the counter' : 'the order can be dispatched and the receiver signs at the venue'}.</p>
         </div></div></div>
       </div>`;
   };
@@ -513,10 +540,7 @@
   pages.sign = id => {
     const o = order(id); if (!o) return notFound();
     if (o.clearance) return head('Clearance', 'Already signed.') + `<a class="btn" href="#/clearance/${id}">View clearance</a>`;
-    if (o.type === 'pickup') {
-      const r = S.release[id], keys = o.lines.flatMap((l, i) => l.units || ['L' + i]);
-      if (!r || keys.some(k => !r.ticks[k])) return head('Customer clearance', `${o.id} · ${esc(o.event)}`) + note('Finish the release checklist first. The customer signs only after every line is counted.', 'warn') + `<p><a class="btn primary" href="#/release/${id}">Go to release checklist</a></p>`;
-    }
+    if (o.type === 'pickup' && o.status !== 'Ready for Pickup') return head('Customer clearance', `${o.id} · ${esc(o.event)}`) + note(o.status === 'For Approval' ? `The checklist is waiting for ${supervisorOf(o.wh)} (Supervisor) to approve. The customer signs after approval.` : 'Staff must finish the checklist and the supervisor must approve it before the customer signs.', 'warn') + `<p><a class="btn primary" href="#/order/${id}">Back to order</a></p>`;
     if (o.type === 'delivery' && o.status !== 'In Transit') return head('Receiver clearance', `${o.id} is ${o.status}.`) + `<a class="btn" href="#/order/${id}">Back to order</a>`;
     const { items, statement, c } = signForm(o);
     const at = o.type === 'pickup' ? `the ${wh(o.wh).name} counter` : esc(o.venue);
@@ -556,7 +580,7 @@
         <p style="margin:22px 0;font-size:13.5px;line-height:1.6">I confirm that I received the items listed above, complete and in the condition stated, for <b>${esc(o.event)}</b>. I am responsible for returning them in the same condition by <b>${o.returnDate}</b>. Missing or damaged items may be charged.</p>
         <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:30px;margin-top:30px">
           <div><div class="sig-img">${S.sigs[id] ? `<img src="${S.sigs[id]}">` : scribble(o.clearance.by)}</div><div style="margin-top:6px"><b>${esc(o.clearance.by)}</b><br><small style="color:var(--ink-3)">${esc(o.clearance.role)} · ${o.clearance.at}</small></div></div>
-          <div style="text-align:right"><div style="font-weight:700">Released by: ${o.releasedBy || (o.wh === 'TGG' ? 'Jomar Ramos' : 'Maria Santos')}</div><small style="color:var(--ink-3)">Signed at ${esc(o.clearance.where)}</small></div>
+          <div style="text-align:right;font-size:13px;line-height:1.6"><div><b>Checked by:</b> ${o.check?.by || (o.wh === 'TGG' ? 'Jomar Ramos' : 'Maria Santos')}</div><div><b>Approved by:</b> ${o.approval?.by || (o.wh === 'TGG' || o.wh === 'QC' ? 'Juan Dela Cruz' : 'Rico Bautista')}</div><small style="color:var(--ink-3)">Signed at ${esc(o.clearance.where)}</small></div>
         </div>
       </div>`;
   };
@@ -630,9 +654,55 @@
       </table></div>`;
   };
 
+  pages.approve = id => {
+    const o = order(id); if (!o) return notFound();
+    if (o.status !== 'For Approval') return head('Review checklist', `${o.id} is ${o.status}.`) + `<a class="btn" href="#/order/${id}">Back to order</a>`;
+    const r = S.release[id] || { ticks: {}, cond: {} };
+    const rows = o.lines.map((l, i) => { const it = item(l.sku);
+      if (l.units) return l.units.map(u => `<tr><td>${lineLabel(l)}</td><td class="mono">${u}</td><td class="num">1</td><td>${condPill(r.cond[u] || 'good')}</td><td><span class="pill ok nodot">✓ counted</span></td></tr>`).join('');
+      const c = r.cond['L' + i] || 'good';
+      return `<tr class="${c !== 'good' ? 'flag' : ''}"><td>${lineLabel(l)}</td><td>-</td><td class="num">${n(l.qty)}</td><td>${condPill(c)}</td><td><span class="pill ok nodot">✓ counted</span></td></tr>`; }).join('');
+    const flagged = Object.values(r.cond).filter(c => c !== 'good').length;
+    const may = canApprove(o);
+    return head('Review checklist', `${o.id} · ${esc(o.event)} · ${typeTag(o)} · ${wh(o.wh).name}`, '', `<a href="#/approvals">Approvals</a> / ${o.id}`) + `
+      <div class="grid g-main">
+        <div class="card"><div class="card-h"><h3>What ${o.check.by} counted</h3><span class="sub">${lineKeys(o).length} of ${lineKeys(o).length} lines checked</span></div>
+          <table class="tbl"><tr><th>Item</th><th>Unit</th><th class="num">Qty</th><th>Condition</th><th>Checked</th></tr>${rows}</table></div>
+        <div class="stack"><div class="card"><div class="card-h"><h3>Submitted</h3><span class="pill warn">For approval</span></div><div class="card-b">
+          <dl class="dl"><dt>Checked by</dt><dd>${o.check.by} (Staff)</dd><dt>Submitted</dt><dd>${o.check.at}</dd><dt>Customer</dt><dd>${esc(cust(o.cust).name)}</dd><dt>${o.type === 'pickup' ? 'Pickup' : 'Delivery'}</dt><dd>${o.date}</dd></dl>
+          ${o.check.note ? `<div style="margin-top:14px">${note(`<b>Note from ${o.check.by.split(' ')[0]}:</b> ${esc(o.check.note)}`, 'warn')}</div>` : ''}
+          ${flagged ? `<p style="font-size:12.5px;color:var(--warn);font-weight:700;margin:12px 0 0">${flagged} line${flagged > 1 ? 's' : ''} with a noted condition. It will be printed on the clearance.</p>` : ''}
+        </div></div>
+        <div class="card"><div class="card-b">
+          ${may ? `<button class="btn ok" style="width:100%;justify-content:center" data-act="approve-order" data-id="${id}">${ic('check')}Approve${o.type === 'pickup' ? ': ready for pickup' : ': ready to dispatch'}</button>
+          <div class="field" style="margin-top:16px"><label class="f">Or send it back to ${o.check.by.split(' ')[0]}</label><textarea class="in" rows="2" id="back-reason" placeholder="e.g. Recount the round tables; use the newer ones."></textarea></div>
+          <button class="btn danger" style="width:100%;justify-content:center" data-act="send-back" data-id="${id}">Send back</button>`
+          : note(`Only <b>${supervisorOf(o.wh)}</b> (Supervisor of ${wh(o.wh).name}) or the Admin can approve this. Switch role at the top to try it.`, 'warn')}
+        </div></div></div>
+      </div>`;
+  };
+
+  pages.approvals = () => {
+    const approver = S.role !== 'staff';
+    if (!approver) {
+      const mine = visibleOrders().filter(o => o.check && o.check.by === me().name || o.sentBack);
+      return head('My submissions', 'Checklists you submitted and what the supervisor decided') + `<div class="card"><table class="tbl"><tr><th>Order</th><th>Submitted</th><th>Supervisor</th><th>Result</th></tr>
+        ${mine.map(o => `<tr class="click" data-go="#/order/${o.id}"><td><b>${esc(o.event)}</b><small>${o.id}</small></td><td>${o.check ? o.check.at : '-'}</td><td>${supervisorOf(o.wh)}</td><td>${o.status === 'For Approval' ? '<span class="pill warn">Waiting</span>' : o.sentBack && o.status === 'Preparing' ? `<span class="pill bad">Sent back</span><small>${esc(o.sentBack.reason)}</small>` : `<span class="pill ok">Approved</span><small>${o.approval ? o.approval.by + ' · ' + o.approval.at : ''}</small>`}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">Nothing submitted yet.</td></tr>'}</table></div>`;
+    }
+    const waiting = D.orders.filter(o => o.status === 'For Approval' && canApprove(o));
+    const adj = D.adjustments.filter(a => a.status === 'Pending approval');
+    const done = D.orders.filter(o => o.approval && canApprove(o));
+    return head('Approvals', S.role === 'supervisor' ? 'Checklists and stock changes from staff at Pasig Main and Las Piñas' : 'Everything waiting for a decision, all warehouses') + `
+      <div class="card"><div class="card-h"><h3>Order checklists</h3><span class="pill warn">${waiting.length} waiting</span></div><table class="tbl"><tr><th>Order</th><th>Type</th><th>Checked by</th><th>Note</th><th></th></tr>
+        ${waiting.map(o => `<tr><td><b>${esc(o.event)}</b><small>${o.id} · ${wh(o.wh).name} · ${o.date}</small></td><td>${typeTag(o)}</td><td>${o.check.by}<small>${o.check.at}</small></td><td style="max-width:280px">${o.check.note ? esc(o.check.note) : '<span style="color:var(--ink-3)">-</span>'}</td><td><a class="btn sm primary" href="#/approve/${o.id}">Review</a></td></tr>`).join('') || '<tr><td colspan="5" class="empty">Nothing waiting. Nice.</td></tr>'}</table></div>
+      <div class="card" style="margin-top:16px"><div class="card-h"><h3>Stock adjustments</h3><span class="pill warn">${adj.length} waiting</span></div><table class="tbl"><tr><th>Adjustment</th><th>Item</th><th class="num">Qty</th><th>By</th><th></th></tr>
+        ${adj.map(a => `<tr><td>${a.type}<small>${esc(a.note)}</small></td><td>${esc(item(a.sku).name)}</td><td class="num">${a.qty}</td><td>${a.by}<small>${a.date}</small></td><td><div style="display:flex;gap:6px"><button class="btn sm ok" data-act="approve" data-id="${a.id}">Approve</button><button class="btn sm danger" data-act="reject" data-id="${a.id}">Reject</button></div></td></tr>`).join('') || '<tr><td colspan="5" class="empty">Nothing waiting.</td></tr>'}</table></div>
+      <div class="card" style="margin-top:16px"><div class="card-h"><h3>Recently approved</h3></div><ul class="feed">${done.map(o => `<li><span class="dot ok"></span><div><a href="#/order/${o.id}">${o.id} · ${esc(o.event)}</a><small>Approved by ${o.approval.by} · ${o.approval.at}</small></div></li>`).join('') || '<li>None yet.</li>'}</ul></div>`;
+  };
+
   pages.adjustments = () => {
-    const admin = S.role === 'admin';
-    return head('Stock adjustments', admin ? 'Stock-ins, write-offs, transfers and condition updates. Staff write-offs and transfers need your approval.' : 'Record stock-ins and condition changes. Write-offs and transfers go to the Admin for approval.',
+    const admin = S.role !== 'staff';
+    return head('Stock adjustments', admin ? 'Stock-ins, write-offs, transfers and condition updates. Staff write-offs and transfers need your approval.' : 'Record stock-ins and condition changes. Write-offs and transfers go to your supervisor for approval.',
       `<button class="btn primary" data-act="new-adj">${ic('plus')}New adjustment</button>`) + `
       <div class="card"><table class="tbl"><tr><th>Adjustment</th><th>Type</th><th>Item</th><th class="num">Qty</th><th>Warehouse</th><th>By</th><th>Status</th>${admin ? '<th></th>' : ''}</tr>
       ${D.adjustments.map(a => `<tr><td><b>${a.id}</b><small>${a.date}</small></td><td>${a.type}<small>${esc(a.note)}</small></td><td>${esc(item(a.sku).name)}<small class="mono">${a.sku}</small></td><td class="num">${a.qty}</td><td>${a.wh.replace('PSG', 'Pasig Main').replace('LPS', 'Las Piñas')}</td><td>${a.by}<small>${a.role}</small></td>
@@ -696,9 +766,9 @@
     if (tab === 'users') body = `<div class="card"><div class="card-h"><h3>Users</h3><button class="btn sm primary" data-act="toast" data-msg="Invite user (mockup)">${ic('plus')}Add user</button></div><table class="tbl"><tr><th>Name</th><th>Role</th><th>Warehouses</th><th>Status</th></tr>
       ${D.users.map(u => `<tr><td><div class="cell-item"><div class="avatar">${u.name.split(' ').map(x => x[0]).join('')}</div><div><b>${u.name}</b><small style="color:var(--ink-3)">${u.email}</small></div></div></td><td>${u.role}</td><td>${u.wh}</td><td>${u.active ? '<span class="pill ok">Active</span>' : '<span class="pill mute">Inactive</span>'}</td></tr>`).join('')}</table></div>`;
     else if (tab === 'roles') {
-      const rows = [['View dashboard and inventory', 1, 1], ['Create orders, release checklist, clearance', 1, 1], ['Process returns and file damage reports', 1, 1], ['Stock-ins and condition updates', 1, 1], ['Write-offs and transfers', 1, 'approval'], ['Approve adjustments, charge customers', 1, 0], ['Warehouses, categories, reports', 1, 0], ['Users and settings', 1, 0]];
-      const cell = v => v === 1 ? `<span style="color:var(--ok)">${ic('check', 'style="width:18px"')}</span>` : v === 'approval' ? '<span class="pill warn nodot">Needs approval</span>' : '<span style="color:var(--ink-3)">-</span>';
-      body = `<div class="card"><table class="tbl"><tr><th>Permission</th><th>Admin</th><th>Staff</th></tr>${rows.map(r => `<tr><td>${r[0]}</td><td>${cell(r[1])}</td><td>${cell(r[2])}</td></tr>`).join('')}</table></div>`;
+      const rows = [['View dashboard and inventory', 1, 1, 1], ['Create orders and do the checklist', 1, 1, 1], ['Approve checklists before release', 1, 'own', 0], ['Customer clearance and dispatch', 1, 1, 1], ['Process returns and file damage reports', 1, 1, 1], ['Stock-ins and condition updates', 1, 1, 1], ['Write-offs and transfers', 1, 1, 'approval'], ['Approve stock adjustments', 1, 'own', 0], ['Charge customers for damage', 1, 0, 0], ['Warehouses, categories, reports', 1, 0, 0], ['Users and settings', 1, 0, 0]];
+      const cell = v => v === 1 ? `<span style="color:var(--ok)">${ic('check', 'style="width:18px"')}</span>` : v === 'approval' ? '<span class="pill warn nodot">Needs approval</span>' : v === 'own' ? '<span class="pill info nodot">Own warehouses</span>' : '<span style="color:var(--ink-3)">-</span>';
+      body = `<div class="card"><table class="tbl"><tr><th>Permission</th><th>Admin</th><th>Supervisor</th><th>Staff</th></tr>${rows.map(r => `<tr><td>${r[0]}</td><td>${cell(r[1])}</td><td>${cell(r[2])}</td><td>${cell(r[3])}</td></tr>`).join('')}</table></div>`;
     } else body = `<div class="card" style="max-width:640px"><div class="card-b">
       <div class="field"><label class="f">Company name</label><input class="in" value="Sample Events Rental Co."></div>
       <div class="field"><label class="f">Address</label><input class="in" value="Ortigas Ave. Ext., Pasig City"></div>
@@ -762,16 +832,17 @@
     const raw = location.hash || '#/dashboard';
     const [path, qs] = raw.slice(2).split('?');
     const params = new URLSearchParams(qs || '');
+    if (ME[params.get('as')]) S.role = params.get('as');
     const parts = path.split('/');
     let key = parts[0] || 'dashboard', html;
     if (key === 'orders' && parts[1] === 'new') key = 'orders/new';
-    if (S.role === 'staff' && ADMIN_ONLY.includes(key)) html = head('Admin only', 'Staff accounts cannot open this page. Switch to Admin at the top to see it.');
+    if (S.role !== 'admin' && ADMIN_ONLY.includes(key)) html = head('Admin only', `${me().role} accounts cannot open this page. Switch to Admin at the top to see it.`);
     else if (key === 'item') html = pages.item(parts[1], parts[2]);
-    else if (['order', 'release', 'sign', 'clearance', 'return'].includes(key)) html = pages[key](parts[1]);
+    else if (['order', 'release', 'sign', 'clearance', 'return', 'approve'].includes(key)) html = pages[key](parts[1]);
     else if (key === 'damage') html = pages.damage(parts[1]);
     else if (key === 'labels') html = pages.labels(params);
     else html = (pages[key] || notFound)();
-    const navKey = { item: 'inventory', order: 'orders', 'orders/new': 'orders', release: 'orders', sign: 'orders', clearance: 'orders', return: 'orders', notifications: '' }[key] ?? key;
+    const navKey = { approve: 'approvals', item: 'inventory', order: 'orders', 'orders/new': 'orders', release: 'orders', sign: 'orders', clearance: 'orders', return: 'orders', notifications: '' }[key] ?? key;
     app.innerHTML = shell(navKey, raw, html, key);
     mount(key);
   }
@@ -782,6 +853,8 @@
   }
   // Deferred so a re-render never runs inside the blur/change of an input it is replacing.
   let pending = null;
+  // Navigate, re-rendering even when the target is the page already open.
+  const navTo = h => { if (location.hash === h) render(); else location.hash = h; };
   const keepScroll = fn => { fn(); if (pending) return; const y = window.scrollY; pending = setTimeout(() => { pending = null; render(); window.scrollTo(0, y); }, 0); };
 
   function setupSig(canvas, okBtn) {
@@ -803,7 +876,7 @@
     const go = e.target.closest('[data-go]');
     if (go && !e.target.closest('a,button,select,input')) { location.hash = go.dataset.go; return; }
     const role = e.target.closest('[data-role]');
-    if (role) { S.role = role.dataset.role; S.newOrder = null; S.invFilter = null; render(); toast(S.role === 'admin' ? 'Viewing as Admin (Juan Dela Cruz)' : 'Viewing as Staff (Maria Santos)'); return; }
+    if (role) { S.role = role.dataset.role; S.newOrder = null; S.invFilter = null; if (/[?&]as=/.test(location.hash)) location.hash = location.hash.replace(/[?&]as=\w+/, ''); else render(); toast(`Viewing as ${me().role} (${me().name})`); return; }
     const tab = e.target.closest('[data-tab]'); if (tab) { S.orderTab = tab.dataset.tab; render(); return; }
     const rt = e.target.closest('[data-rtab]'); if (rt) { S.repTab = rt.dataset.rtab; render(); return; }
     const st = e.target.closest('[data-stab]'); if (st) { S.setTab = st.dataset.stab; render(); return; }
@@ -823,7 +896,7 @@
       r.ticks[k] = true; keepScroll(() => {}); const row = document.getElementById('row-' + k); if (row) { row.classList.add('flash'); row.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
       toast(`Scanned ${k.startsWith('L') ? item(o.lines[+k.slice(1)].sku).sku : k}: matched on ${o.id}`);
     }
-    else if (act === 'dispatch') { const o = order(id); o.status = 'In Transit'; o.releasedBy = me().name; o.lines.forEach(l => {}); location.hash = '#/order/' + id; toast(`${o.id} dispatched. The receiver signs at the venue.`); }
+    else if (act === 'dispatch') { const o = order(id); o.status = 'In Transit'; o.releasedBy = me().name; o.lines.forEach(l => {}); navTo('#/order/' + id); toast(`${o.id} dispatched. The receiver signs at the venue.`); }
     else if (act === 'sig-clear') document.getElementById('sig')._clear();
     else if (act === 'sign') {
       const o = order(id); const name = document.getElementById('sig-name').value.trim() || cust(o.cust).contact;
@@ -832,13 +905,35 @@
       o.releasedBy = o.releasedBy || me().name;
       o.status = o.type === 'pickup' ? 'Picked Up' : 'Delivered';
       D.notifications.unshift({ tone: 'ok', text: `${o.id} ${o.status.toLowerCase()}, clearance signed by ${name}`, when: 'Just now', link: '#/order/' + id });
-      location.hash = '#/clearance/' + id; toast('Clearance signed and saved on the order');
+      navTo('#/clearance/' + id); toast('Clearance signed and saved on the order');
     }
     else if (act === 'scan-ret') {
       const o = order(id), r = S.ret[id]; const u = o.lines.flatMap(l => l.units || []).find(x => !r.scanned[x]);
       if (!u) { toast('All units scanned'); return; } r.scanned[u] = true; keepScroll(() => {}); toast(`Scanned ${u}: belongs to ${o.id}`);
     }
     else if (act === 'finish-return') finishReturn(id);
+    else if (act === 'submit-check') {
+      const o = order(id), r = S.release[id];
+      o.check = { by: me().name, at: now(), note: document.getElementById('chk-note').value.trim(), cond: { ...r.cond } };
+      o.status = 'For Approval'; o.sentBack = null;
+      D.notifications.unshift({ tone: 'warn', text: `${o.id} ${o.event} checklist submitted by ${me().name}, waiting for approval`, when: 'Just now', link: '#/approve/' + id });
+      navTo('#/order/' + id); toast(`Submitted. ${supervisorOf(o.wh)} (Supervisor) has been notified.`);
+    }
+    else if (act === 'approve-order') {
+      const o = order(id);
+      o.approval = { by: me().name, role: me().role, at: now() };
+      o.status = o.type === 'pickup' ? 'Ready for Pickup' : 'Ready to Dispatch';
+      D.notifications.unshift({ tone: 'ok', text: `${o.id} approved by ${me().name}: ${o.status.toLowerCase()}`, when: 'Just now', link: '#/order/' + id });
+      navTo('#/order/' + id); toast(`Approved. ${o.id} is ${o.status}. ${o.check.by} has been notified.`);
+    }
+    else if (act === 'send-back') {
+      const o = order(id), reason = document.getElementById('back-reason').value.trim();
+      if (!reason) { toast('Add a reason so staff know what to fix'); document.getElementById('back-reason').focus(); return; }
+      o.sentBack = { by: me().name, at: now(), reason }; o.status = 'Preparing';
+      S.release[id] = { ticks: {}, cond: { ...(o.check.cond || {}) } };
+      D.notifications.unshift({ tone: 'bad', text: `${o.id} sent back by ${me().name}: ${reason}`, when: 'Just now', link: '#/order/' + id });
+      navTo('#/order/' + id); toast(`Sent back to ${o.check.by}`);
+    }
     else if (act === 'add-line') { S.newOrder.lines.push({ sku: 'TBL-5FT-RND', qty: 10 }); keepScroll(() => {}); }
     else if (act === 'rm-line') { S.newOrder.lines.splice(+a.dataset.i, 1); keepScroll(() => {}); }
     else if (act === 'save-order') saveOrder();
@@ -886,7 +981,7 @@
     D.orders.unshift({ id, type: f.type, event: document.getElementById('no-event').value, venue: f.type === 'delivery' ? (document.getElementById('no-venue')?.value || '') : `Customer pickup at ${wh(f.wh).name}`, wh: f.wh,
       cust: 'new', date: 'Nov 14, 2026', returnDate: 'Nov 15, 2026', status: 'Preparing', lines });
     D.customers.new = { name: document.getElementById('no-cust').value, contact: 'Rosa Mendoza', phone: '0917 555 0166' };
-    S.newOrder = null; location.hash = '#/order/' + id; toast(`${id} saved. Stock is reserved.`);
+    S.newOrder = null; navTo('#/order/' + id); toast(`${id} saved. Stock is reserved.`);
   }
 
   function finishReturn(id) {
@@ -907,7 +1002,7 @@
     });
     o.status = 'Returned'; o.discrepancy = issues > 0;
     D.notifications.unshift({ tone: issues ? 'bad' : 'ok', text: `${o.id} returned${issues ? ` with ${issues} issue${issues > 1 ? 's' : ''}` : ', complete'}`, when: 'Just now', link: '#/order/' + id });
-    location.hash = '#/order/' + id; toast(issues ? `Return complete. ${issues} report${issues > 1 ? 's' : ''} filed.` : 'Return complete. Everything is back in stock.');
+    navTo('#/order/' + id); toast(issues ? `Return complete. ${issues} report${issues > 1 ? 's' : ''} filed.` : 'Return complete. Everything is back in stock.');
   }
 
   function newAdj() {
@@ -918,17 +1013,18 @@
       <div class="grid g2" style="gap:12px"><div class="field"><label class="f">Quantity</label><input class="in" id="adj-qty" type="number" value="10"></div>
       <div class="field"><label class="f">Warehouse</label><select class="in" id="adj-wh">${D.warehouses.filter(w => myWh(w.id)).map(w => `<option value="${w.id}">${w.name}</option>`).join('')}</select></div></div>
       <div class="field"><label class="f">Note</label><input class="in" id="adj-note" placeholder="Reason, PO number, etc."></div>
-      <div id="adj-hint">${staff ? note('Write-offs and transfers you create go to the Admin for approval.') : ''}</div>`,
+      <div id="adj-hint">${staff ? note('Write-offs and transfers you create go to your supervisor for approval.') : ''}</div>`,
       `<button class="btn" data-close>Cancel</button><button class="btn primary" id="adj-save">Save</button>`, (m, close) => {
         m.querySelector('#adj-save').onclick = () => {
           const type = m.querySelector('#adj-type').value;
           const needs = staff && (type === 'Write-off' || type === 'Transfer');
           D.adjustments.unshift({ id: 'ADJ-0' + S.nextAdj++, type, sku: m.querySelector('#adj-sku').value, qty: +m.querySelector('#adj-qty').value, wh: m.querySelector('#adj-wh').value, by: me().name, role: me().role, note: m.querySelector('#adj-note').value || '-', status: needs ? 'Pending approval' : 'Done', date: 'Nov 4, 2026' });
-          close(); render(); toast(needs ? 'Sent to Admin for approval' : 'Adjustment saved and logged');
+          close(); render(); toast(needs ? 'Sent to Rico Bautista (Supervisor) for approval' : 'Adjustment saved and logged');
         };
       });
   }
 
   window.addEventListener('hashchange', () => { render(); window.scrollTo(0, 0); });
+  seedRelease();
   render();
 })();

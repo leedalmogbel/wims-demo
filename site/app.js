@@ -185,7 +185,9 @@
     bg.innerHTML = `<div class="modal"><div class="card-h"><h3>${title}</h3><button class="btn sm" data-close>${ic('x')}</button></div><div class="card-b">${body}</div><div class="modal-f">${foot}</div></div>`;
     bg.addEventListener('click', e => { if (e.target === bg || e.target.closest('[data-close]')) bg.remove(); });
     document.body.appendChild(bg);
+    bg.addEventListener('keydown', e => { if (e.key === 'Escape') bg.remove(); });
     onMount && onMount(bg.querySelector('.modal'), () => bg.remove());
+    bg.querySelector('.card-b input, .card-b select')?.focus();
   }
 
   // Deterministic scribble used as the signature on seeded clearances.
@@ -288,7 +290,7 @@
           ${navItem('#/phone', 'phone', 'phone', 'On the phone')}
           ${admin ? `<div class="nav-group">Admin</div>${navItem('#/reports', 'reports', 'chart', 'Reports')}${navItem('#/settings', 'settings', 'gear', 'Settings')}` : ''}
         </nav>
-        <div class="side-foot">${S.guide ? '' : '<a class="btn sm" href="#/welcome" style="margin-bottom:10px">Open the guide</a><br>'}Mockup · sample data only<br>Package 1 (web app)</div>
+        <div class="side-foot">${S.guide ? '' : '<a class="btn sm" href="#/welcome" style="margin-bottom:10px">Open the guide</a><br>'}Mockup · sample data only<br>Package 1 (web app)<br><button class="link-btn" data-act="restart">Reset demo</button></div>
       </aside>
       <div class="main">
         <header class="topbar no-print">
@@ -322,6 +324,7 @@
     const scope = S.role === 'admin' ? 'All 4 warehouses' : 'Pasig Main and Las Piñas (your assigned warehouses)';
     const waiting = orders.filter(o => o.status === 'For Approval' && canApprove(o));
     return head(greet, `${scope} · Wednesday, Nov 4, 2026`, `<a class="btn" href="#/phone">${ic('cam')}Scan</a><a class="btn primary" href="#/orders/new">${ic('plus')}New order</a>`) + `
+      ${(!S.guide || !curStep()) && !S.exploreHidden ? `<div class="card explore no-print"><div class="card-h"><div><h3>Things to try</h3><span class="sub">${exploreSeen()} of ${EXPLORE.length} seen. Everything here is sample data, so go ahead and change it.</span></div><button class="btn sm" data-act="hide-explore">Dismiss</button></div><div class="explore-grid">${EXPLORE.map(e => `<a href="${e[0]}" class="${S.seen[pathOf(e[0])] ? 'seen' : ''}"><span class="tick-sm">${S.seen[pathOf(e[0])] ? ic('check') : ''}</span><span><b>${e[1]}</b><small>${e[2]}</small></span></a>`).join('')}</div></div>` : ''}
       <div class="grid g4">
         ${kpi('Total stock', n(total), 'pieces across all conditions', 'box')}
         ${kpi('Active orders', active.length, `${deliveries} deliveries · ${active.length - deliveries} pickups`, 'clip')}
@@ -403,7 +406,7 @@
       </div>`;
     }
     return head(esc(it.name), `<span class="mono">${it.sku}</span> · ${cat(it.cat).name} · ${it.track === 'unit' ? 'Tracked per unit' : 'Tracked by count'} · low-stock alert below ${it.low}`,
-      `<a class="btn" href="#/labels?sku=${it.sku}">${ic('print')}Print labels</a>${S.role === 'admin' ? `<button class="btn" data-act="toast" data-msg="Edit item (mockup)">Edit</button>` : ''}`,
+      `<a class="btn" href="#/labels?sku=${it.sku}">${ic('print')}Print labels</a>${S.role === 'admin' ? `<button class="btn" data-act="toast" data-msg="Editing items: available in the full system">Edit</button>` : ''}`,
       `<a href="#/inventory">Inventory</a> / ${it.sku}`) + `
       <div class="grid g4">
         ${kpi('Good', n(tot.good), `${n(tot.avail)} available, ${n(tot.reserved)} reserved`, 'check', 'ok')}
@@ -418,7 +421,7 @@
         </table></div>${unitsHtml}`;
   };
 
-  pages.warehouses = () => head('Warehouses', '4 of 5 included locations in use', `<button class="btn primary" data-act="toast" data-msg="Add warehouse form (mockup)">${ic('plus')}Add warehouse</button>`) + `
+  pages.warehouses = () => head('Warehouses', `${D.warehouses.length} in use · 5 included in the base price`, `<button class="btn primary" data-act="add-warehouse">${ic('plus')}Add warehouse</button>`) + `
     <div class="grid g2">${D.warehouses.map(w => {
       let pcs = 0, out = 0, rep = 0; for (const it of D.items) { const s = stats(it, w.id); pcs += s.total; out += s.out; rep += s.dmg + s.rep; }
       const active = D.orders.filter(o => o.wh === w.id && o.status !== 'Returned').length;
@@ -430,13 +433,13 @@
           <div><div style="font-size:20px;font-weight:800">${rep}</div><small style="color:var(--ink-3)">repair/damaged</small></div>
           <div><div style="font-size:20px;font-weight:800">${active}</div><small style="color:var(--ink-3)">active orders</small></div>
         </div></div></div>`; }).join('')}
-      <div class="card" style="display:grid;place-items:center;border-style:dashed;min-height:180px;color:var(--ink-3)"><div style="text-align:center">${ic('plus', 'style="width:26px"')}<div style="font-weight:700;margin-top:6px">1 more location included</div><small>Extra warehouses beyond 5 are billed as a one-time setup fee</small></div></div>
+      ${D.warehouses.length < 5 ? `<div class="card" style="display:grid;place-items:center;border-style:dashed;min-height:180px;color:var(--ink-3)"><div style="text-align:center">${ic('plus', 'style="width:26px"')}<div style="font-weight:700;margin-top:6px">${5 - D.warehouses.length} more location${D.warehouses.length === 4 ? '' : 's'} included</div><small>Extra warehouses beyond 5 are billed as a one-time setup fee</small></div></div>` : ''}
     </div>`;
 
-  pages.categories = () => head('Categories', 'How items are grouped', `<button class="btn primary" data-act="toast" data-msg="Add category (mockup)">${ic('plus')}Add category</button>`) + `
+  pages.categories = () => head('Categories', 'How items are grouped', `<button class="btn primary" data-act="add-category">${ic('plus')}Add category</button>`) + `
     <div class="card"><table class="tbl"><tr><th>Category</th><th class="num">Items</th><th class="num">Pieces</th><th>Tracked</th></tr>
     ${D.categories.map(c => { const its = D.items.filter(i => i.cat === c.id); const pcs = its.reduce((a, i) => a + stats(i).total, 0); const tr = [...new Set(its.map(i => i.track === 'unit' ? 'Per unit' : 'By count'))].join(', ');
-      return `<tr><td><div class="cell-item"><div class="thumb">${ic(catIcon[c.id])}</div><b>${c.name}</b></div></td><td class="num">${its.length}</td><td class="num">${n(pcs)}</td><td>${tr || '-'}</td></tr>`; }).join('')}</table></div>`;
+      return `<tr><td><div class="cell-item"><div class="thumb">${ic(catIcon[c.id] || 'box')}</div><b>${c.name}</b></div></td><td class="num">${its.length}</td><td class="num">${n(pcs)}</td><td>${tr || '-'}</td></tr>`; }).join('')}</table></div>`;
 
   pages.orders = () => {
     const tab = S.orderTab || 'all';
@@ -533,14 +536,15 @@
       <h1>See one order go from booking to return</h1>
       <p class="lead">You'll set up a sample rental business, then play each person on the team. It takes a few minutes, and everything here is sample data.</p>
       <ol class="w-steps">${STEPS.map(x => `<li><span class="n">${STEPS.indexOf(x) + 1}</span><div><b>${x.label}</b><span class="who-sm">${ME[x.role].role}</span><small>${x.summary}</small></div></li>`).join('')}</ol>
-      <div class="w-actions"><button class="btn primary" data-act="start-guide">Start the guide ${ic('arrow')}</button><button class="btn" data-act="skip-guide">Explore on my own</button></div>
+      <div class="w-actions"><button class="btn primary" data-act="start-guide">${S.setupDone ? 'Continue the guide' : 'Start the guide'} ${ic('arrow')}</button><button class="btn" data-act="skip-guide">Explore on my own</button></div>
     </div></main>`;
 
+  const EXPLORE = [['#/inventory?as=admin', 'Add your own item', 'Inventory → Add item, then book it on an order'], ['#/orders/new', 'Try to double-book', 'Book the same chairs on a busy date'], ['#/calendar', 'Availability calendar', 'What is free each day, per warehouse'], ['#/item/TNT-1020/TNT-1020-007', 'Per-unit history', 'Every event and damage report for one tent'], ['#/labels', 'QR labels', 'Print stickers; the codes really scan'], ['#/phone', 'On the phone', 'Scanning, and signing at a venue'], ['#/approvals?as=supervisor', 'Approvals', 'What the supervisor sees'], ['#/reports?as=admin', 'Reports', 'Stock, discrepancies, damage per item'], ['#/settings?as=admin', 'Roles and permissions', 'What each role can do']];
+  const exploreSeen = () => EXPLORE.filter(e => S.seen[pathOf(e[0])]).length;
   pages.done = () => {
     const o = story();
     if (!o || o.status !== 'Returned') return head('Guide summary', 'Finish the guide to see the full record of your order.') + `<a class="btn primary" href="#/welcome">Go to the guide</a>`;
     const reports = D.damage.filter(d => d.order === o.id);
-    const explore = [['#/calendar', 'Availability calendar', 'What is free each day, per warehouse'], ['#/item/TNT-1020/TNT-1020-007', 'Per-unit history', 'Every event and damage report for one tent'], ['#/labels', 'QR labels', 'Print stickers; the codes really scan'], ['#/phone', 'On the phone', 'Scanning, and signing at a venue'], ['#/approvals?as=admin', 'Approvals', 'Checklists and stock changes waiting'], ['#/reports?as=admin', 'Reports', 'Stock, discrepancies, damage per item'], ['#/settings?as=admin', 'Roles and permissions', 'What each role can do']];
     return head('That\'s the whole flow', `${o.id} · ${esc(o.event)}: every step is on record`) + `
       <div class="grid g-main">
         <div class="card"><div class="card-h"><h3>The record of this order</h3></div><ul class="feed">
@@ -550,7 +554,7 @@
           <li><span class="dot ok"></span><div><b>Signed for by ${esc(o.clearance.by)}</b> · <a href="#/clearance/${o.id}">view the clearance</a><small>${o.clearance.at}</small></div></li>
           <li><span class="dot ${reports.length ? 'bad' : 'ok'}"></span><div><b>Returned</b> ${reports.length ? `with ${reports.length} report${reports.length > 1 ? 's' : ''} filed` : 'complete, in the same condition'}${reports.length ? `<small>${reports.map(d => `<a href="#/damage/${d.id}">${d.id}</a>`).join(' · ')}</small>` : ''}</div></li>
         </ul></div>
-        <div class="stack"><div class="card"><div class="card-h"><h3>Explore the rest</h3><span class="sub">${explore.filter(e => S.seen[pathOf(e[0])]).length} of ${explore.length} seen</span></div><ul class="feed">${explore.map(e => `<li><span class="dot ${S.seen[pathOf(e[0])] ? 'ok' : ''}"></span><div><a href="${e[0]}">${e[1]}</a><small>${e[2]}</small></div></li>`).join('')}</ul></div>
+        <div class="stack"><div class="card"><div class="card-h"><h3>Explore the rest</h3><span class="sub">${exploreSeen()} of ${EXPLORE.length} seen</span></div><ul class="feed">${EXPLORE.map(e => `<li><span class="dot ${S.seen[pathOf(e[0])] ? 'ok' : ''}"></span><div><a href="${e[0]}">${e[1]}</a><small>${e[2]}</small></div></li>`).join('')}</ul></div>
         <button class="btn" style="width:100%;justify-content:center" data-act="restart">Start over</button></div>
       </div>`;
   };
@@ -722,7 +726,7 @@
         </div>
         <div class="stack"><div class="card"><div class="card-h"><h3>Result</h3></div><div class="card-b">
           ${flags.length ? note(`<b>${flags.length} issue${flags.length > 1 ? 's' : ''} found</b><ul style="margin:6px 0 0;padding-left:18px">${flags.map(f => `<li>${f}</li>`).join('')}</ul>`, 'bad') : note('Everything is back, in the same condition it left.', 'ok')}
-          ${flags.length ? `<div class="field" style="margin-top:14px"><label class="f">Photos of damage</label><div class="photo" style="aspect-ratio:auto;height:90px;cursor:pointer" data-act="toast" data-msg="Opens the camera or file picker (mockup)">${ic('cam', 'style="width:28px"')}<span class="cap">Tap to add photos</span></div></div>
+          ${flags.length ? `<div class="field" style="margin-top:14px"><label class="f">Photos of damage</label><div class="photo" style="aspect-ratio:auto;height:90px;cursor:pointer" data-act="toast" data-msg="Taking photos: available in the full system">${ic('cam', 'style="width:28px"')}<span class="cap">Tap to add photos</span></div></div>
           <div class="field"><label class="f">Notes</label><textarea class="in" rows="2" placeholder="What happened?"></textarea></div>` : ''}
           <button class="btn primary" style="width:100%;justify-content:center;margin-top:14px" data-act="finish-return" data-id="${id}">${ic('check')}Complete return${flags.length ? ' and file reports' : ''}</button>
           <p style="font-size:12px;color:var(--ink-3);margin:10px 0 0">Good items go back to available stock. Damaged ones move to damaged / for repair. Missing ones go to Admin for review.</p>
@@ -736,7 +740,7 @@
       const d = D.damage.find(x => x.id === id); if (!d) return notFound();
       const o = order(d.order) || { id: d.order, event: 'TechCon 2025 Expo', clearance: { at: 'Oct 17, 2026 · 8:10 AM', by: 'Mark Villanueva', role: 'Client representative', where: 'SMX Convention Center' } }, it = item(d.sku), c = cust(d.cust);
       return head(`${d.id}: ${esc(it.name)}${d.unit ? ` <span class="mono" style="font-size:.8em">${d.unit}</span>` : ` × ${d.qty}`}`, `${condName(d.before)} → ${condName(d.after)} · reported ${d.date} by ${d.by}`,
-        S.role === 'admin' ? `<button class="btn" data-act="toast" data-msg="Marked as under repair (mockup)">${ic('wrench')}Send to repair</button><button class="btn" data-act="toast" data-msg="Written off (mockup)">Write off</button><button class="btn primary" data-act="toast" data-msg="Charge added to ${esc(c.name)}'s account (mockup)">Charge customer</button>` : '',
+        S.role === 'admin' ? `<button class="btn" data-act="damage-status" data-id="${d.id}" data-to="Under repair">${ic('wrench')}Send to repair</button><button class="btn" data-act="damage-status" data-id="${d.id}" data-to="Written off">Write off</button><button class="btn primary" data-act="damage-status" data-id="${d.id}" data-to="Charged to customer">Charge customer</button>` : '',
         `<a href="#/damage">Damage &amp; loss</a> / ${d.id}`) + `
         <div class="grid g-main">
           <div class="stack">
@@ -745,7 +749,7 @@
               <li><span class="dot ok"></span><div><b>Clearance signed by ${esc(o.clearance.by)}</b> (${esc(o.clearance.role)}) at ${esc(o.clearance.where)} · <a href="#/clearance/${o.id}">view</a><small>${o.clearance.at}</small></div></li>
               <li><span class="dot bad"></span><div><b>Returned: ${condName(d.after).toLowerCase()}</b>. ${esc(d.note)}<small>${d.date} · checked by ${d.by}</small></div></li>
             </ul></div>
-            <div class="grid g2"><div class="photo">${ic(catIcon[it.cat])}<span class="cap">Photo at return · ${d.date}</span></div><div class="photo">${ic(catIcon[it.cat])}<span class="cap">Close-up</span></div></div>
+            <div class="grid g2"><div class="photo">${ic(catIcon[it.cat] || 'box')}<span class="cap">Photo at return · ${d.date}</span></div><div class="photo">${ic(catIcon[it.cat] || 'box')}<span class="cap">Close-up</span></div></div>
           </div>
           <div class="stack"><div class="card"><div class="card-h"><h3>Details</h3><span class="pill ${d.status.startsWith('Charged') ? 'ok' : d.status.startsWith('Awaiting') ? 'warn' : 'info'}">${d.status}</span></div><div class="card-b"><dl class="dl">
             <dt>Item</dt><dd>${esc(it.name)}</dd><dt>SKU</dt><dd class="mono">${it.sku}</dd>${d.unit ? `<dt>Unit</dt><dd><a class="mono" href="#/item/${it.sku}/${d.unit}">${d.unit}</a></dd>` : `<dt>Quantity</dt><dd>${d.qty}</dd>`}
@@ -812,7 +816,7 @@
     return head('Stock adjustments', admin ? 'Stock-ins, write-offs, transfers and condition updates. Staff write-offs and transfers need your approval.' : 'Record stock-ins and condition changes. Write-offs and transfers go to your supervisor for approval.',
       `<button class="btn primary" data-act="new-adj">${ic('plus')}New adjustment</button>`) + `
       <div class="card"><table class="tbl"><tr><th>Adjustment</th><th>Type</th><th>Item</th><th class="num">Qty</th><th>Warehouse</th><th>By</th><th>Status</th>${admin ? '<th></th>' : ''}</tr>
-      ${D.adjustments.map(a => `<tr><td><b>${a.id}</b><small>${a.date}</small></td><td>${a.type}<small>${esc(a.note)}</small></td><td>${esc(item(a.sku).name)}<small class="mono">${a.sku}</small></td><td class="num">${a.qty}</td><td>${a.wh.replace('PSG', 'Pasig Main').replace('LPS', 'Las Piñas')}</td><td>${a.by}<small>${a.role}</small></td>
+      ${D.adjustments.map(a => `<tr><td><b>${a.id}</b><small>${a.date}</small></td><td>${a.type}<small>${esc(a.note)}</small></td><td>${esc(item(a.sku).name)}<small class="mono">${a.sku}</small></td><td class="num">${a.qty}</td><td>${a.wh.split(' → ').map(c => wh(c)?.name || c).join(' → ')}</td><td>${a.by}<small>${a.role}</small></td>
         <td>${a.status === 'Pending approval' ? '<span class="pill warn">Pending approval</span>' : a.status === 'Rejected' ? '<span class="pill bad">Rejected</span>' : '<span class="pill ok">Done</span>'}</td>
         ${admin ? `<td>${a.status === 'Pending approval' ? `<div style="display:flex;gap:6px"><button class="btn sm ok" data-act="approve" data-id="${a.id}">Approve</button><button class="btn sm danger" data-act="reject" data-id="${a.id}">Reject</button></div>` : ''}</td>` : ''}</tr>`).join('')}
       </table></div>`;
@@ -824,11 +828,11 @@
     const C = { good: '#2257e6', out: '#8fb0ff', rep: '#e59a1a', dmg: '#d9493b' };
     let body = '';
     if (tab === 'inventory') {
-      const per = D.warehouses.map(w => { const s = { good: 0, out: 0, rep: 0, dmg: 0 }; for (const it of D.items) { const x = stats(it, w.id); s.good += x.good; s.out += x.out; s.rep += x.rep; s.dmg += x.dmg; } return { w, s, t: s.good + s.out + s.rep + s.dmg }; });
+      const per = D.warehouses.map(w => { const s = { good: 0, out: 0, rep: 0, dmg: 0 }; for (const it of D.items) { const x = stats(it, w.id); s.good += x.good; s.out += x.out; s.rep += x.rep; s.dmg += x.dmg; } return { w, s, t: s.good + s.out + s.rep + s.dmg }; }).filter(p => p.t > 0);
       const max = Math.max(...per.map(p => p.t));
       const low = lowStock(null);
       body = `<div class="grid g2">
-        <div class="card"><div class="card-h"><h3>Stock levels per warehouse</h3><button class="btn sm" data-act="toast" data-msg="Exported to Excel (mockup)">Export</button></div><div class="card-b">
+        <div class="card"><div class="card-h"><h3>Stock levels per warehouse</h3><button class="btn sm" data-act="toast" data-msg="Excel export: available in the full system">Export</button></div><div class="card-b">
           <div class="legend"><span><i style="background:${C.good}"></i>Good</span><span><i style="background:${C.out}"></i>Out</span><span><i style="background:${C.rep}"></i>For repair</span><span><i style="background:${C.dmg}"></i>Damaged</span></div>
           <div class="bars">${per.map(p => `<div class="bar"><span>${p.w.name}</span><div class="track" style="width:${p.t / max * 100}%">${['good', 'out', 'rep', 'dmg'].map(k => `<span style="width:${p.s[k] / p.t * 100}%;background:${C[k]}" title="${k}: ${p.s[k]}"></span>`).join('')}</div><span class="v">${n(p.t)}</span></div>`).join('')}</div>
         </div></div>
@@ -860,7 +864,7 @@
           ${[['Nov 3, 2:14 PM', 'Delivered, clearance signed', 'ORD-1040 · 133 pcs', '', 'Carla Reyes (customer)'], ['Nov 3, 9:02 AM', 'Write-off requested', 'Tiffany Chair (White)', '2', 'Maria Santos'], ['Nov 2, 4:30 PM', 'Stock-in', 'Chair Sash (Gold)', '100', 'Maria Santos'], ['Nov 2, 10:05 AM', 'Released (pickup)', 'ORD-1038 · 14 pcs', '', 'Jomar Ramos'], ['Nov 1, 9:40 AM', 'Released (delivery)', 'ORD-1037 · 242 pcs', '', 'Maria Santos'], ['Oct 30, 3:15 PM', 'Condition: repair → good', '6ft Rectangular Table', '3', 'Juan Dela Cruz'], ['Oct 27, 5:10 PM', 'Returned with discrepancy', 'ORD-1036', '', 'Maria Santos']].map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td class="num">${r[3]}</td><td>${r[4]}</td></tr>`).join('')}</table></div>
       </div>`;
     }
-    return head('Reports', 'Inventory, deliveries and operations', `<button class="btn" data-act="toast" data-msg="Downloading PDF (mockup)">${ic('print')}Download PDF</button>`) + `<div class="tabs">${t('inventory', 'Inventory')}${t('deliveries', 'Deliveries & returns')}${t('ops', 'Operations')}</div>` + body;
+    return head('Reports', 'Inventory, deliveries and operations', `<button class="btn" data-act="toast" data-msg="PDF download: available in the full system">${ic('print')}Download PDF</button>`) + `<div class="tabs">${t('inventory', 'Inventory')}${t('deliveries', 'Deliveries & returns')}${t('ops', 'Operations')}</div>` + body;
   };
 
   pages.notifications = () => head('Notifications', 'In-app alerts for low stock, order status and return discrepancies') + `
@@ -870,18 +874,18 @@
     const tab = S.setTab || 'users';
     const t = (k, l) => `<button class="${tab === k ? 'on' : ''}" data-stab="${k}">${l}</button>`;
     let body;
-    if (tab === 'users') body = `<div class="card"><div class="card-h"><h3>Users</h3><button class="btn sm primary" data-act="toast" data-msg="Invite user (mockup)">${ic('plus')}Add user</button></div><table class="tbl"><tr><th>Name</th><th>Role</th><th>Warehouses</th><th>Status</th></tr>
+    if (tab === 'users') body = `<div class="card"><div class="card-h"><h3>Users</h3><button class="btn sm primary" data-act="add-user">${ic('plus')}Add user</button></div><table class="tbl"><tr><th>Name</th><th>Role</th><th>Warehouses</th><th>Status</th></tr>
       ${D.users.map(u => `<tr><td><div class="cell-item"><div class="avatar">${u.name.split(' ').map(x => x[0]).join('')}</div><div><b>${u.name}</b><small style="color:var(--ink-3)">${u.email}</small></div></div></td><td>${u.role}</td><td>${u.wh}</td><td>${u.active ? '<span class="pill ok">Active</span>' : '<span class="pill mute">Inactive</span>'}</td></tr>`).join('')}</table></div>`;
     else if (tab === 'roles') {
       const rows = [['View dashboard and inventory', 1, 1, 1], ['Create orders and do the checklist', 1, 1, 1], ['Approve checklists before release', 1, 'own', 0], ['Customer clearance and dispatch', 1, 1, 1], ['Process returns and file damage reports', 1, 1, 1], ['Stock-ins and condition updates', 1, 1, 1], ['Write-offs and transfers', 1, 1, 'approval'], ['Approve stock adjustments', 1, 'own', 0], ['Charge customers for damage', 1, 0, 0], ['Warehouses, categories, reports', 1, 0, 0], ['Users and settings', 1, 0, 0]];
       const cell = v => v === 1 ? `<span style="color:var(--ok)">${ic('check', 'style="width:18px"')}</span>` : v === 'approval' ? '<span class="pill warn nodot">Needs approval</span>' : v === 'own' ? '<span class="pill info nodot">Own warehouses</span>' : '<span style="color:var(--ink-3)">-</span>';
       body = `<div class="card"><table class="tbl"><tr><th>Permission</th><th>Admin</th><th>Supervisor</th><th>Staff</th></tr>${rows.map(r => `<tr><td>${r[0]}</td><td>${cell(r[1])}</td><td>${cell(r[2])}</td><td>${cell(r[3])}</td></tr>`).join('')}</table></div>`;
     } else body = `<div class="card" style="max-width:640px"><div class="card-b">
-      <div class="field"><label class="f">Company name</label><input class="in" value="${esc(S.company)}"></div>
+      <div class="field"><label class="f">Company name</label><input class="in" data-company value="${esc(S.company)}"></div>
       <div class="field"><label class="f">Address</label><input class="in" value="Ortigas Ave. Ext., Pasig City"></div>
       <div class="grid g2" style="gap:12px"><div class="field"><label class="f">Phone</label><input class="in" value="(02) 8555 0100"></div><div class="field"><label class="f">Email</label><input class="in" value="hello@example.com"></div></div>
-      <div class="field"><label class="f">Clearance text (printed on every clearance)</label><textarea class="in" rows="3">I confirm that I received the items listed above, complete and in the condition stated. Missing or damaged items may be charged.</textarea></div>
-      <button class="btn primary" data-act="toast" data-msg="Saved (mockup)">Save</button></div></div>`;
+      <div class="field"><label class="f">Clearance text (fixed in this demo)</label><textarea class="in" rows="3" readonly>I confirm that I received the items listed above, complete and in the condition stated. Missing or damaged items may be charged.</textarea></div>
+      <button class="btn primary" data-act="save-company">Save</button></div></div>`;
     return head('Settings', 'Users, roles and company profile') + `<div class="tabs">${t('users', 'Users')}${t('roles', 'Roles & permissions')}${t('company', 'Company profile')}</div>` + body;
   };
 
@@ -956,6 +960,7 @@
   }
 
   function mount(key) {
+    saveState();
     if (key === 'sign') setupSig(document.getElementById('sig'), document.getElementById('sig-ok'));
     if (key === 'phone') setupSig(document.getElementById('p-sig'), document.getElementById('p-sig-ok'));
   }
@@ -995,7 +1000,13 @@
     if (act === 'hide-guide') { S.guide = false; render(); }
     else if (act === 'start-guide') { S.guide = true; S.newOrder = null; navTo(curStep() ? curStep().route() : '#/done'); }
     else if (act === 'skip-guide') { S.guide = false; navTo('#/dashboard?as=admin'); }
-    else if (act === 'restart') { location.hash = '#/welcome'; location.reload(); }
+    else if (act === 'restart') resetDemo();
+    else if (act === 'hide-explore') { S.exploreHidden = true; render(); }
+    else if (act === 'add-warehouse') addWarehouse();
+    else if (act === 'add-category') addCategory();
+    else if (act === 'add-user') addUser();
+    else if (act === 'save-company') { render(); toast('Company profile saved'); }
+    else if (act === 'damage-status') { const d = D.damage.find(x => x.id === id); d.status = a.dataset.to; render(); toast(`${d.id}: ${d.status}`); }
     else if (act === 'toggle-nav') { S.navOpen = !S.navOpen; render(); }
     else if (act === 'finish-setup') { S.setupDone = true; keepScroll(() => {}); toast('Setup finished'); }
     else if (act === 'do-step') doStep();
@@ -1003,7 +1014,7 @@
     else if (act === 'toast') toast(a.dataset.msg);
     else if (act === 'print') window.print();
     else if (act === 'clear-q') { S.q = ''; render(); }
-    else if (act === 'add-item') toast('Add item form: name, SKU, category, tracking (by count / per unit), image (mockup)');
+    else if (act === 'add-item') addItem();
     else if (act === 'status') { const o = order(routeId()); o.status = a.dataset.to; render(); toast(`${o.id} is now ${o.status}`); }
     else if (act === 'scan') {
       const o = order(id), r = S.release[id]; const keys = []; o.lines.forEach((l, i) => l.units ? l.units.forEach(u => keys.push(u)) : keys.push('L' + i));
@@ -1035,7 +1046,9 @@
     else if (act === 'add-line') { S.newOrder.lines.push({ sku: 'TBL-5FT-RND', qty: 10 }); keepScroll(() => {}); }
     else if (act === 'rm-line') { S.newOrder.lines.splice(+a.dataset.i, 1); keepScroll(() => {}); }
     else if (act === 'save-order') saveOrder();
-    else if (act === 'approve' || act === 'reject') { const x = D.adjustments.find(y => y.id === id); x.status = act === 'approve' ? 'Done' : 'Rejected'; render(); toast(`${x.id} ${act === 'approve' ? 'approved' : 'rejected'}`); }
+    else if (act === 'approve' || act === 'reject') { const x = D.adjustments.find(y => y.id === id);
+      if (act === 'approve') { const err = applyAdj(x); if (err) { toast(err); return; } }
+      x.status = act === 'approve' ? 'Done' : 'Rejected'; render(); toast(`${x.id} ${act === 'approve' ? 'approved, stock updated' : 'rejected'}`); }
     else if (act === 'new-adj') newAdj();
     else if (act === 'phone-scan') {
       const o = order('ORD-1038'), pr = S.phoneRet;
@@ -1054,6 +1067,7 @@
 
   document.addEventListener('change', e => {
     const t = e.target;
+    setTimeout(saveState, 0);
     if (t.dataset.filter) { S.invFilter[t.dataset.filter] = t.value; render(); }
     else if (t.dataset.cond) { const id = routeId(); S.release[id].cond[t.dataset.cond] = t.value; }
     else if (t.dataset.ret) { const id = routeId(); S.ret[id][t.dataset.ret][t.dataset.k] = Math.max(0, parseInt(t.value || '0', 10)); keepScroll(() => {}); }
@@ -1149,26 +1163,144 @@
     navTo('#/order/' + id); toast(issues ? `Return complete. ${issues} report${issues > 1 ? 's' : ''} filed.` : 'Return complete. Everything is back in stock.');
   }
 
+  // Applies a stock adjustment. Returns an error message if there isn't enough stock.
+  function applyAdj(a) {
+    const it = item(a.sku), [src, dst] = a.wh.split(' → ');
+    if (a.type === 'Condition update') return null;
+    if (a.type === 'Stock-in') {
+      if (it.track === 'count') (it.stock[src] = it.stock[src] || [0, 0, 0])[0] += a.qty;
+      else addUnits(it, src, a.qty);
+      return null;
+    }
+    if (it.track === 'count') {
+      const avail = stats(it, src).avail;
+      if (a.qty > avail) return `Only ${n(avail)} available at ${wh(src).name}`;
+      it.stock[src][0] -= a.qty;
+      if (dst) (it.stock[dst] = it.stock[dst] || [0, 0, 0])[0] += a.qty;
+      return null;
+    }
+    const free = it.units.filter(u => u.wh === src && u.cond === 'good' && !unitOrder(u.code) && !unitReserved(u.code));
+    if (a.qty > free.length) return `Only ${free.length} free at ${wh(src).name}`;
+    const chosen = free.slice(0, a.qty);
+    if (dst) chosen.forEach(u => { u.wh = dst; }); else it.units = it.units.filter(u => !chosen.includes(u));
+    return null;
+  }
+  function addUnits(it, whId, qty) {
+    let next = it.units.reduce((m, u) => Math.max(m, +u.code.slice(-3)), 0);
+    for (let i = 0; i < qty; i++) it.units.push({ code: `${it.sku}-${String(++next).padStart(3, '0')}`, wh: whId, cond: 'good', out: null });
+  }
+  const formError = (m, msg) => { const e = m.querySelector('.form-err'); e.textContent = msg; e.hidden = false; };
+  const ERR = '<p class="form-err" role="alert" hidden></p>';
+
   function newAdj() {
     const staff = S.role === 'staff';
     modal('New stock adjustment', `
       <div class="field"><label class="f">Type</label><select class="in" id="adj-type"><option>Stock-in</option><option>Condition update</option><option>Write-off</option><option>Transfer</option></select></div>
       <div class="field"><label class="f">Item</label><select class="in" id="adj-sku">${D.items.map(i => `<option value="${i.sku}">${esc(i.name)} (${i.sku})</option>`).join('')}</select></div>
-      <div class="grid g2" style="gap:12px"><div class="field"><label class="f">Quantity</label><input class="in" id="adj-qty" type="number" value="10"></div>
-      <div class="field"><label class="f">Warehouse</label><select class="in" id="adj-wh">${D.warehouses.filter(w => myWh(w.id)).map(w => `<option value="${w.id}">${w.name}</option>`).join('')}</select></div></div>
+      <div class="grid g2" style="gap:12px"><div class="field"><label class="f">Quantity</label><input class="in" id="adj-qty" type="number" min="1" value="10"></div>
+      <div class="field"><label class="f" id="adj-wh-label">Warehouse</label><select class="in" id="adj-wh">${D.warehouses.filter(w => myWh(w.id)).map(w => `<option value="${w.id}">${esc(w.name)}</option>`).join('')}</select></div></div>
+      <div class="field" id="adj-to-wrap" hidden><label class="f">Transfer to</label><select class="in" id="adj-to">${D.warehouses.map(w => `<option value="${w.id}">${esc(w.name)}</option>`).join('')}</select></div>
       <div class="field"><label class="f">Note</label><input class="in" id="adj-note" placeholder="Reason, PO number, etc."></div>
-      <div id="adj-hint">${staff ? note('Write-offs and transfers you create go to your supervisor for approval.') : ''}</div>`,
+      <div id="adj-hint">${staff ? note('Write-offs and transfers you create go to your supervisor for approval.') : ''}</div>${ERR}`,
       `<button class="btn" data-close>Cancel</button><button class="btn primary" id="adj-save">Save</button>`, (m, close) => {
+        m.querySelector('#adj-type').onchange = e => { const t = e.target.value === 'Transfer'; m.querySelector('#adj-to-wrap').hidden = !t; m.querySelector('#adj-wh-label').textContent = t ? 'Transfer from' : 'Warehouse'; };
         m.querySelector('#adj-save').onclick = () => {
-          const type = m.querySelector('#adj-type').value;
+          const type = m.querySelector('#adj-type').value, qty = parseInt(m.querySelector('#adj-qty').value, 10), src = m.querySelector('#adj-wh').value, dst = m.querySelector('#adj-to').value;
+          if (!(qty > 0)) return formError(m, 'Enter a quantity of at least 1.');
+          if (type === 'Transfer' && src === dst) return formError(m, 'Choose two different warehouses.');
           const needs = staff && (type === 'Write-off' || type === 'Transfer');
-          D.adjustments.unshift({ id: 'ADJ-0' + S.nextAdj++, type, sku: m.querySelector('#adj-sku').value, qty: +m.querySelector('#adj-qty').value, wh: m.querySelector('#adj-wh').value, by: me().name, role: me().role, note: m.querySelector('#adj-note').value || '-', status: needs ? 'Pending approval' : 'Done', date: 'Nov 4, 2026' });
-          close(); render(); toast(needs ? 'Sent to Rico Bautista (Supervisor) for approval' : 'Adjustment saved and logged');
+          const x = { id: 'ADJ-0' + S.nextAdj, type, sku: m.querySelector('#adj-sku').value, qty, wh: type === 'Transfer' ? `${src} → ${dst}` : src, by: me().name, role: me().role, note: m.querySelector('#adj-note').value || '-', status: needs ? 'Pending approval' : 'Done', date: 'Nov 4, 2026' };
+          if (!needs) { const err = applyAdj(x); if (err) return formError(m, err); }
+          S.nextAdj++; D.adjustments.unshift(x); close(); render(); toast(needs ? `Sent to ${supervisorOf(src)} for approval` : 'Adjustment saved, stock updated');
         };
       });
   }
 
+  function addItem() {
+    modal('Add item', `
+      <div class="field"><label class="f">Item name</label><input class="in" id="i-name" placeholder="e.g. Ghost Chair (Clear)"></div>
+      <div class="grid g2" style="gap:12px">
+        <div class="field"><label class="f">SKU (optional)</label><input class="in" id="i-sku" placeholder="Created for you"></div>
+        <div class="field"><label class="f">Category</label><select class="in" id="i-cat">${D.categories.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></div>
+        <div class="field"><label class="f">How is it tracked?</label><select class="in" id="i-track"><option value="count">By count (chairs, tables)</option><option value="unit">Per unit (tents, sound gear)</option></select></div>
+        <div class="field"><label class="f">Low-stock alert below</label><input class="in" id="i-low" type="number" min="0" value="10"></div>
+        <div class="field"><label class="f">Warehouse</label><select class="in" id="i-wh">${D.warehouses.map(w => `<option value="${w.id}">${esc(w.name)}</option>`).join('')}</select></div>
+        <div class="field"><label class="f">Starting quantity</label><input class="in" id="i-qty" type="number" min="1" value="20"></div>
+      </div>${ERR}`,
+      `<button class="btn" data-close>Cancel</button><button class="btn primary" id="i-save">Add item</button>`, (m, close) => {
+        m.querySelector('#i-save').onclick = () => {
+          const name = m.querySelector('#i-name').value.trim(), qty = parseInt(m.querySelector('#i-qty').value, 10), track = m.querySelector('#i-track').value, whId = m.querySelector('#i-wh').value;
+          if (!name) return formError(m, 'Enter the item name.');
+          if (!(qty > 0)) return formError(m, 'Enter a starting quantity of at least 1.');
+          const clean = v => v.toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-|-$/g, '');
+          let sku = clean(m.querySelector('#i-sku').value) || clean(name).slice(0, 14).replace(/-$/, '');
+          if (!sku) sku = 'ITEM';
+          if (item(sku)) { if (m.querySelector('#i-sku').value.trim()) return formError(m, `SKU ${sku} is already used.`); let k = 2; while (item(`${sku}-${k}`)) k++; sku = `${sku}-${k}`; }
+          const it = { sku, name, cat: m.querySelector('#i-cat').value, track, low: Math.max(0, parseInt(m.querySelector('#i-low').value, 10) || 0) };
+          if (track === 'count') it.stock = { [whId]: [qty, 0, 0] }; else { it.units = []; addUnits(it, whId, qty); }
+          D.items.unshift(it); S.q = ''; S.invFilter = null; close(); navTo('#/item/' + sku); toast(`${name} added`);
+        };
+      });
+  }
+  function addWarehouse() {
+    const over = D.warehouses.length >= 5;
+    modal('Add warehouse', `
+      <div class="field"><label class="f">Name</label><input class="in" id="w-name" placeholder="e.g. Cavite"></div>
+      <div class="field"><label class="f">Address</label><input class="in" id="w-addr" placeholder="Street, city"></div>
+      <div class="field"><label class="f">Description (optional)</label><input class="in" id="w-desc"></div>
+      ${over ? note('This goes beyond the 5 included locations, so it would be billed as a one-time setup fee.', 'warn') : ''}${ERR}`,
+      `<button class="btn" data-close>Cancel</button><button class="btn primary" id="w-save">Add warehouse</button>`, (m, close) => {
+        m.querySelector('#w-save').onclick = () => {
+          const name = m.querySelector('#w-name').value.trim();
+          if (!name) return formError(m, 'Enter the warehouse name.');
+          if (D.warehouses.some(w => w.name.toLowerCase() === name.toLowerCase())) return formError(m, `${name} already exists.`);
+          let k = D.warehouses.length + 1; while (wh('W' + k)) k++;
+          D.warehouses.push({ id: 'W' + k, name, address: m.querySelector('#w-addr').value.trim() || 'No address yet', description: m.querySelector('#w-desc').value.trim() || 'New location. Add stock with a stock-in adjustment.', active: true });
+          close(); render(); toast(`${name} added. Use Adjustments → Stock-in to add stock.`);
+        };
+      });
+  }
+  function addCategory() {
+    modal('Add category', `<div class="field"><label class="f">Category name</label><input class="in" id="c-name" placeholder="e.g. Catering"></div>${ERR}`,
+      `<button class="btn" data-close>Cancel</button><button class="btn primary" id="c-save">Add category</button>`, (m, close) => {
+        m.querySelector('#c-save').onclick = () => {
+          const name = m.querySelector('#c-name').value.trim();
+          if (!name) return formError(m, 'Enter the category name.');
+          if (D.categories.some(c => c.name.toLowerCase() === name.toLowerCase())) return formError(m, `${name} already exists.`);
+          D.categories.push({ id: 'cat-' + (D.categories.length + 1), name }); close(); render(); toast(`${name} added`);
+        };
+      });
+  }
+  function addUser() {
+    modal('Add user', `
+      <div class="grid g2" style="gap:12px"><div class="field"><label class="f">Full name</label><input class="in" id="u-name"></div><div class="field"><label class="f">Email</label><input class="in" id="u-email" type="email"></div></div>
+      <div class="field"><label class="f">Role</label><select class="in" id="u-role"><option>Staff</option><option>Supervisor</option><option>Admin</option></select></div>
+      <div class="field"><label class="f">Warehouses</label><div class="check-list">${D.warehouses.map(w => `<label><input type="checkbox" value="${esc(w.name)}"> ${esc(w.name)}</label>`).join('')}</div></div>${ERR}`,
+      `<button class="btn" data-close>Cancel</button><button class="btn primary" id="u-save">Add user</button>`, (m, close) => {
+        m.querySelector('#u-save').onclick = () => {
+          const name = m.querySelector('#u-name').value.trim(), role = m.querySelector('#u-role').value, whs = [...m.querySelectorAll('.check-list input:checked')].map(x => x.value);
+          if (!name) return formError(m, 'Enter the full name.');
+          if (role !== 'Admin' && !whs.length) return formError(m, 'Choose at least one warehouse.');
+          D.users.push({ name, email: m.querySelector('#u-email').value.trim() || '-', role, wh: role === 'Admin' ? 'All warehouses' : whs.join(', '), active: true });
+          close(); render(); toast(`${name} added`);
+        };
+      });
+  }
+
+  // ---------- saved in this browser ----------
+  const SAVE_KEY = 'wims-demo-v1';
+  let saving = true;
+  const saveState = () => { if (!saving) return; try { const { navOpen, ...keep } = S; localStorage.setItem(SAVE_KEY, JSON.stringify({ D, S: keep })); } catch (e) { /* private mode or full: the demo still works, it just won't survive a reload */ } };
+  const loadState = () => { try { const st = JSON.parse(localStorage.getItem(SAVE_KEY)); if (!st) return false; Object.assign(D, st.D); Object.assign(S, st.S); return true; } catch (e) { return false; } };
+  function resetDemo() {
+    if (!confirm('Start over? This clears everything you changed in this demo.')) return;
+    saving = false; try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* nothing saved */ }
+    location.hash = '#/welcome'; location.reload();
+  }
+  window.addEventListener('pagehide', saveState);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) saveState(); });
+
   window.addEventListener('hashchange', () => { S.navOpen = false; render(); window.scrollTo(0, 0); });
-  seedRelease();
+  if (!loadState()) seedRelease();
   render();
 })();

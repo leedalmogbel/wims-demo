@@ -143,6 +143,61 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  
   await h.go('#/reports'); check('staff blocked from reports', (await page.textContent('h1')).includes('Admin only'));
   await page.context().close();
 
+  // ---- Free exploring
+  page = await open(); h = helpers(page); page.on('dialog', d => d.accept());
+  await page.goto(BASE); await page.click('[data-act="skip-guide"]'); await page.waitForTimeout(150);
+  check('explore lands on the dashboard with no guide', (await page.locator('.guide').count()) === 0 && page.url().includes('dashboard'));
+  check('dashboard shows things to try', (await page.locator('.explore-grid a').count()) === 9);
+  await page.screenshot({ path: OUT + 'explore_dashboard.png', fullPage: true });
+  await h.go('#/categories'); await page.click('[data-act="add-category"]'); await page.click('#c-save');
+  check('category form requires a name', (await page.textContent('.form-err')).includes('Enter'));
+  await page.fill('#c-name', 'Catering'); await page.click('#c-save'); await page.waitForTimeout(100);
+  check('new category is listed', (await page.textContent('.page')).includes('Catering'));
+  await h.go('#/inventory'); await page.click('[data-act="add-item"]'); await page.fill('#i-name', 'Ghost Chair (Clear)');
+  await page.selectOption('#i-cat', { label: 'Catering' }); await page.fill('#i-qty', '75'); await page.screenshot({ path: OUT + 'explore_add_item.png' }); await page.click('#i-save'); await page.waitForTimeout(150);
+  const newSku = decodeURIComponent(page.url().split('/item/')[1]);
+  check('new item opens with its stock', (await page.textContent('h1')).includes('Ghost Chair') && (await page.textContent('.page')).includes('75'), newSku);
+  await h.go('#/inventory'); await page.click('[data-act="add-item"]'); await page.fill('#i-name', 'Fog Machine'); await page.selectOption('#i-track', 'unit'); await page.fill('#i-qty', '3'); await page.click('#i-save'); await page.waitForTimeout(150);
+  check('per-unit item gets unit codes', (await page.textContent('.page')).includes('-003'));
+  await h.go('#/orders/new'); await page.selectOption('[data-line="0"][data-k="sku"]', newSku); await page.waitForTimeout(80); await page.fill('[data-line="0"][data-k="qty"]', '50'); await page.dispatchEvent('[data-line="0"][data-k="qty"]', 'change'); await page.waitForTimeout(80);
+  check('new item can be booked', (await page.locator('.avail').first().textContent()).includes('75 free'));
+  await h.go('#/warehouses'); await page.click('[data-act="add-warehouse"]'); await page.fill('#w-name', 'Cavite'); await page.click('#w-save'); await page.waitForTimeout(100);
+  check('new warehouse is listed', (await page.textContent('.page')).includes('Cavite'));
+  await h.go('#/reports'); check('reports survive an empty warehouse', !(await page.textContent('.page')).includes('NaN'));
+  await h.go('#/adjustments'); await page.click('[data-act="new-adj"]'); await page.selectOption('#adj-sku', newSku); await page.selectOption('#adj-wh', { label: 'Cavite' }); await page.fill('#adj-qty', '30'); await page.click('#adj-save'); await page.waitForTimeout(100);
+  await h.go('#/item/' + newSku); check('stock-in really adds stock', (await page.textContent('.page')).includes('Cavite') && (await page.locator('.kpi .v').first().textContent()).trim() === '105');
+  await h.go('#/adjustments'); await page.click('[data-act="new-adj"]'); await page.selectOption('#adj-type', 'Write-off'); await page.selectOption('#adj-sku', newSku); await page.selectOption('#adj-wh', { label: 'Cavite' }); await page.fill('#adj-qty', '99'); await page.click('#adj-save'); await page.waitForTimeout(80);
+  check('cannot write off more than is there', (await page.textContent('.form-err')).includes('Only 30'));
+  await page.keyboard.press('Escape'); await page.waitForTimeout(50);
+  check('Escape closes a form', (await page.locator('.modal').count()) === 0);
+  await h.go('#/approvals?as=admin'); const before = await page.locator('[data-act="approve"]').count(); await page.locator('[data-act="approve"]').first().click(); await page.waitForTimeout(100);
+  check('approving an adjustment clears it', (await page.locator('[data-act="approve"]').count()) === before - 1);
+  await h.go('#/settings'); await page.click('[data-act="add-user"]'); await page.fill('#u-name', 'Ana Reyes'); await page.click('#u-save'); check('user needs a warehouse', (await page.textContent('.form-err')).includes('warehouse'));
+  await page.locator('.check-list input').first().check(); await page.click('#u-save'); await page.waitForTimeout(100);
+  check('new user is listed', (await page.textContent('.page')).includes('Ana Reyes'));
+  await h.go('#/damage/DMG-0089'); await page.click('[data-to="Charged to customer"]'); await page.waitForTimeout(80);
+  check('damage action updates the report', (await page.textContent('.page')).includes('Charged to customer'));
+  await h.go('#/dashboard'); await page.click('[data-act="hide-explore"]'); await page.waitForTimeout(80);
+  check('things to try can be dismissed', (await page.locator('.explore').count()) === 0);
+  await page.reload(); await page.waitForTimeout(250);
+  check('dismissal survives a reload', (await page.locator('.explore').count()) === 0);
+  await h.go('#/inventory'); const inv = await page.textContent('.page');
+  check('added items survive a reload', inv.includes('Ghost Chair') && inv.includes('Fog Machine'));
+  await h.go('#/warehouses'); check('added warehouse survives a reload', (await page.textContent('.page')).includes('Cavite'));
+  await page.click('[data-act="restart"]'); await page.waitForTimeout(400);
+  check('reset returns to the welcome screen', page.url().includes('/welcome') && (await page.locator('.welcome').count()) === 1);
+  await page.click('[data-act="skip-guide"]'); await page.waitForTimeout(120); await h.go('#/inventory');
+  check('reset clears added items', !(await page.textContent('.page')).includes('Ghost Chair'));
+  await page.context().close();
+
+  // ---- Guide progress survives a reload
+  page = await open(); h = helpers(page); await page.goto(BASE); await page.click('[data-act="start-guide"]'); await page.waitForTimeout(100);
+  await page.click('[data-act="do-step"]'); await page.waitForTimeout(120); await h.cont(); await page.click('[data-act="do-step"]'); await page.waitForTimeout(150); await h.cont();
+  await page.locator('[data-tick]').first().click(); await page.waitForTimeout(60);
+  await page.reload(); await page.waitForTimeout(250);
+  check('reload keeps the guide step and ticks', (await h.count()) === 'Step 3 of 6' && (await page.locator('.tick.on').count()) === 1);
+  await page.context().close();
+
   // ---- Every page, on desktop and at phone width
   const routes = ['#/welcome', '#/setup?as=admin', '#/dashboard?as=admin', '#/orders', '#/orders/new', '#/calendar', '#/order/ORD-1045', '#/release/ORD-1045?as=staff', '#/approvals?as=supervisor', '#/approve/ORD-1042?as=supervisor', '#/order/ORD-1039', '#/sign/ORD-1039?as=staff', '#/clearance/ORD-1040?as=admin', '#/return/ORD-1037', '#/order/ORD-1036', '#/damage', '#/damage/DMG-0092', '#/damage/DMG-0089', '#/item/TNT-1020/TNT-1020-007', '#/item/CHR-TIF-WHT', '#/inventory', '#/labels', '#/phone', '#/adjustments', '#/reports', '#/settings', '#/warehouses', '#/categories', '#/notifications', '#/done'];
   page = await open(); h = helpers(page); await page.goto(BASE); let blank = [];
